@@ -1,0 +1,129 @@
+{
+  "name": "Shakespeare Play Explorer",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Shakespeare Play Explorer",
+        "formDescription": "Enter a Shakespeare play name and choose whether to list key characters or human-centric themes. Results are sent to your email as JSON.",
+        "formFields": {
+          "values": [
+            {
+              "fieldType": "text",
+              "fieldLabel": "Shakespeare Play",
+              "fieldName": "play_name",
+              "placeholder": "e.g. Hamlet, Macbeth, Romeo and Juliet",
+              "requiredField": true
+            },
+            {
+              "fieldType": "dropdown",
+              "fieldLabel": "What would you like?",
+              "fieldName": "output_type",
+              "fieldOptions": {
+                "values": [
+                  { "option": "Key Characters" },
+                  { "option": "Human-centric Themes" }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldType": "email",
+              "fieldLabel": "Your email address",
+              "fieldName": "email",
+              "requiredField": true
+            }
+          ]
+        },
+        "responseMode": "onReceived",
+        "options": {
+          "path": "shakespeare-play-explorer"
+        }
+      },
+      "id": "form-trigger-1",
+      "name": "Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "webhookId": "shakespeare-play-explorer",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "options": {}
+      },
+      "id": "merge-1",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [560, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama3.2\",\n  \"stream\": false,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are a Shakespeare expert. The user requested information about the play '{{ $json.play_name }}'. They want: {{ $json.output_type === 'Key Characters' ? 'a list of key characters with brief descriptions' : 'human-centric themes (love, betrayal, ambition, etc.) with short explanations' }}.\\n\\nReturn ONLY valid JSON with this structure: { \\\"play\\\": \\\"<play name>\\\", \\\"requestType\\\": \\\"characters\\\" or \\\"themes\\\", \\\"title\\\": \\\"<descriptive title>\\\", \\\"items\\\": [{ \\\"name\\\": \\\"<name>\\\", \\\"description\\\": \\\"<brief description>\\\" }], \\\"summary\\\": \\\"<one sentence overview>\\\" }\"\n    }\n  ]\n}"
+      },
+      "id": "http-ollama-1",
+      "name": "Ollama",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [380, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map((i) => i.json || {});\n\nconst form = items.find(\n  (i) => i.play_name || i.output_type || i.email || i['Shakespeare Play'] || i['What would you like?'] || i['Your email address'],\n) || {};\n\nconst ollama = items.find((i) => i.message?.content || i.response || i.model || i.created_at) || {};\n\nconst play_name = form.play_name || form['Shakespeare Play'] || '';\nconst output_type = form.output_type || form['What would you like?'] || 'Key Characters';\nconst email = form.email || form['Your email address'] || '';\nconst output_type_value = output_type === 'Human-centric Themes' ? 'themes' : 'characters';\n\nlet json_content;\ntry {\n  const raw = ollama.message?.content || ollama.response || JSON.stringify(ollama);\n  const match = typeof raw === 'string' ? raw.match(/\\{[\\s\\S]*\\}/) : null;\n  json_content = match\n    ? JSON.stringify(JSON.parse(match[0]), null, 2)\n    : JSON.stringify({ play: play_name, requestType: output_type_value, raw }, null, 2);\n} catch (e) {\n  json_content = JSON.stringify(\n    {\n      play: play_name,\n      requestType: output_type_value,\n      error: 'Parse failed',\n      raw: ollama.message?.content || ollama.response || null,\n    },\n    null,\n    2,\n  );\n}\n\nreturn {\n  json: {\n    play_name,\n    output_type,\n    output_type_value,\n    email,\n    json_content,\n  },\n};\n"
+      },
+      "id": "code-1",
+      "name": "Build Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [780, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "n8n@yourdomain.local",
+        "toEmail": "={{ $json.email }}",
+        "subject": "=Shakespeare {{ $json.output_type }} – {{ $json.play_name }}",
+        "emailFormat": "text",
+        "text": "=Here are the {{ $json.output_type }} for {{ $json.play_name }}:\n\n```json\n{{ $json.json_content }}\n```\n\nThis JSON is suitable for rendering in a web page or further processing."
+      },
+      "id": "send-email-1",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1000, 300]
+    }
+  ],
+  "connections": {
+    "Form": {
+      "main": [
+        [
+          { "node": "Ollama", "type": "main", "index": 0 },
+          { "node": "Merge", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Ollama": {
+      "main": [
+        [{ "node": "Merge", "type": "main", "index": 1 }]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [{ "node": "Build Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Result": {
+      "main": [
+        [{ "node": "Send Email", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": []
+}

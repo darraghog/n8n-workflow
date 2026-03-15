@@ -2,14 +2,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib/common.sh"
 DIST_DIR="$ROOT/dist/releases"
 mkdir -p "$DIST_DIR"
 ENVIRONMENT="${1:-dev}"
 
-case "$ENVIRONMENT" in
-  dev|test|prod) ;;
-  *) echo "[package] ERROR: environment must be one of: dev, test, prod"; exit 1 ;;
-esac
+common::validate_environment "$ENVIRONMENT" "package"
 
 SHORT_SHA="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || true)"
 if [[ -z "$SHORT_SHA" ]]; then

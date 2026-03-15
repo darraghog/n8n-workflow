@@ -2,13 +2,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib/common.sh"
 WORKFLOWS_DIR="$ROOT/workflows"
 ENVIRONMENT="${1:-dev}"
 
-case "$ENVIRONMENT" in
-  dev|test|prod) ;;
-  *) echo "[preflight] ERROR: environment must be one of: dev, test, prod"; exit 1 ;;
-esac
+common::validate_environment "$ENVIRONMENT" "preflight"
 
 echo "[preflight] Root: $ROOT"
 echo "[preflight] Environment: $ENVIRONMENT"

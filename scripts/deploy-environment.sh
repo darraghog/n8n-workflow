@@ -2,17 +2,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib/common.sh"
 DIST_DIR="$ROOT/dist/releases"
 LOCALSERVER_CONFIG_PATH="${LOCALSERVER_CONFIG_PATH:-/home/darraghog/dev/localserver-config}"
 HTTPS_CERT_FILE="${HTTPS_CERT_FILE:-}"
 HTTPS_KEY_FILE="${HTTPS_KEY_FILE:-}"
 
-if [[ -f "$ROOT/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ROOT/.env"
-  set +a
-fi
+common::load_project_env "$ROOT"
 
 ENVIRONMENT="${1:-}"
 TARGET="${2:-}"
@@ -25,19 +21,8 @@ if [[ -z "$ENVIRONMENT" ]]; then
   exit 1
 fi
 
-case "$ENVIRONMENT" in
-  dev|test|prod) ;;
-  *) echo "[deploy] ERROR: environment must be one of: dev, test, prod"; exit 1 ;;
-esac
-
-if [[ -z "$TARGET" ]]; then
-  if [[ "$ENVIRONMENT" == "dev" || "$ENVIRONMENT" == "test" ]]; then
-    TARGET="local"
-  else
-    echo "[deploy] ERROR: target is required for prod"
-    exit 1
-  fi
-fi
+common::validate_environment "$ENVIRONMENT" "deploy"
+TARGET="$(common::resolve_target "$ENVIRONMENT" "$TARGET" "deploy")"
 
 if [[ -z "$RELEASE_ID" ]]; then
   if [[ -f "$DIST_DIR/LATEST" ]]; then
@@ -60,22 +45,9 @@ echo "[deploy] Release: $RELEASE_ID"
 echo "[deploy] Environment: $ENVIRONMENT"
 echo "[deploy] Target: $TARGET"
 
-if [[ "$ENVIRONMENT" == "prod" ]]; then
-  [[ -n "$HTTPS_CERT_FILE" && -n "$HTTPS_KEY_FILE" ]] || {
-    echo "[deploy] ERROR: prod requires HTTPS_CERT_FILE and HTTPS_KEY_FILE";
-    exit 1;
-  }
-  [[ -r "$HTTPS_CERT_FILE" && -r "$HTTPS_KEY_FILE" ]] || {
-    echo "[deploy] ERROR: cannot read HTTPS cert/key files";
-    exit 1;
-  }
-fi
+common::require_prod_tls "$ENVIRONMENT" "$HTTPS_CERT_FILE" "$HTTPS_KEY_FILE" "deploy"
 
-# localserver-config uses local/prod envs; map dev/test -> local
-DEPLOY_ENV="$ENVIRONMENT"
-if [[ "$ENVIRONMENT" == "dev" || "$ENVIRONMENT" == "test" ]]; then
-  DEPLOY_ENV="local"
-fi
+DEPLOY_ENV="$(common::map_infra_environment "$ENVIRONMENT")"
 
 echo "[deploy] Infra deploy via localserver-config..."
 "$LOCALSERVER_CONFIG_PATH/scripts/deploy-to-server.sh" "$DEPLOY_ENV" "$TARGET"

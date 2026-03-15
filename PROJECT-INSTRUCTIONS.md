@@ -152,8 +152,35 @@ The script loads `.env`, sets `N8N_HOST` and `N8N_EDITOR_BASE_URL`, and runs `po
 
 ### 5.4 Deploy flow
 
-- **Full deploy:** `./scripts/deploy.sh` — installs base packages, podman, compose, systemd units, and brings up stacks.
-- **Compose-only (updates):** `./scripts/deploy.sh --compose-only` — skips package install; use when syncing from a dev machine via SSH.
+- **Primary operator command:** `./scripts/deploy-environment.sh <env> [target] [release-id]`
+- **Rollback command:** `./scripts/rollback-release.sh <env> [target] <release-id>`
+- Deployment is package-driven and API-driven: preflight -> package -> deploy stack -> import/update workflows -> activate -> smoke checks.
+
+### 5.5 Example invocations
+
+```bash
+# 1) Validate workflow + docs gates
+./scripts/preflight.sh test
+
+# 2) Build release bundle
+./scripts/package-release.sh test
+
+# 3) Deploy latest packaged release to test/local
+./scripts/deploy-environment.sh test
+
+# 4) Deploy specific release to test/local
+./scripts/deploy-environment.sh test local 20260315-1631-nogit
+
+# 5) Prod deploy (requires client TLS credentials)
+HTTPS_CERT_FILE=/path/client-cert.pem HTTPS_KEY_FILE=/path/client-key.pem \
+  ./scripts/deploy-environment.sh prod <prod-hostname> 20260315-1631-nogit
+
+# 6) Webhook smoke with automatic URL discovery
+N8N_API_KEY=<api-key> ./scripts/smoke-test-webhook.sh test local
+
+# 7) Roll back to known-good release
+./scripts/rollback-release.sh test local 20260315-1559-nogit
+```
 
 ---
 
@@ -205,10 +232,12 @@ To switch to Postgres:
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/deploy.sh` | Full install + deploy |
-| `scripts/deploy.sh --compose-only` | Compose-only deploy (updates) |
-| `scripts/start-n8n.sh up` | Start n8n stack |
-| `scripts/start-n8n.sh down` | Stop n8n stack |
+| `scripts/preflight.sh <env>` | Run required quality gates |
+| `scripts/package-release.sh <env>` | Build release bundle and manifest |
+| `scripts/deploy-environment.sh <env> [target] [release-id]` | End-to-end deploy automation |
+| `scripts/rollback-release.sh <env> [target] <release-id>` | Roll back to prior release |
+| `scripts/smoke-test.sh <env> [target]` | Service health smoke test |
+| `scripts/smoke-test-webhook.sh <env> [target]` | Webhook smoke with URL discovery |
 
 ### n8n docs
 

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib/common.sh"
 ENVIRONMENT="${1:-}"
 TARGET="${2:-}"
 WORKFLOW_NAME="${3:-${WORKFLOW_NAME:-Shakespeare Play Explorer}}"
@@ -11,11 +12,8 @@ HTTPS_CERT_FILE="${HTTPS_CERT_FILE:-}"
 HTTPS_KEY_FILE="${HTTPS_KEY_FILE:-}"
 REQUIRE_ACTIVE_WORKFLOW="${REQUIRE_ACTIVE_WORKFLOW:-1}"
 
-if [[ -z "$N8N_API_KEY" && -f "$ROOT/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ROOT/.env"
-  set +a
+if [[ -z "$N8N_API_KEY" ]]; then
+  common::load_project_env "$ROOT"
   N8N_API_KEY="${N8N_API_KEY:-}"
 fi
 
@@ -24,53 +22,24 @@ if [[ -z "$ENVIRONMENT" ]]; then
   exit 1
 fi
 
-case "$ENVIRONMENT" in
-  dev|test|prod) ;;
-  *) echo "[webhook-discovery] ERROR: environment must be one of: dev, test, prod" >&2; exit 1 ;;
-esac
-
-if [[ -z "$TARGET" ]]; then
-  if [[ "$ENVIRONMENT" == "dev" || "$ENVIRONMENT" == "test" ]]; then
-    TARGET="local"
-  else
-    echo "[webhook-discovery] ERROR: target is required for prod" >&2
-    exit 1
-  fi
-fi
+common::validate_environment "$ENVIRONMENT" "webhook-discovery"
+TARGET="$(common::resolve_target "$ENVIRONMENT" "$TARGET" "webhook-discovery")"
 
 if [[ -z "$N8N_API_KEY" ]]; then
   echo "[webhook-discovery] ERROR: N8N_API_KEY is required" >&2
   exit 1
 fi
 
-if [[ -z "$N8N_API_URL" ]]; then
-  if [[ "$TARGET" == "local" ]]; then
-    N8N_API_URL="https://127.0.0.1:8444/api/v1"
-  else
-    N8N_API_URL="https://$TARGET:8444/api/v1"
-  fi
-fi
+N8N_API_URL="$(common::resolve_n8n_api_url "$TARGET" "$N8N_API_URL")"
 
 curl_args=(-sS -H "X-N8N-API-KEY: $N8N_API_KEY")
-if [[ "$ENVIRONMENT" == "prod" ]]; then
-  [[ -n "$HTTPS_CERT_FILE" && -n "$HTTPS_KEY_FILE" ]] || {
-    echo "[webhook-discovery] ERROR: prod requires HTTPS_CERT_FILE and HTTPS_KEY_FILE" >&2
-    exit 1
-  }
-  [[ -r "$HTTPS_CERT_FILE" && -r "$HTTPS_KEY_FILE" ]] || {
-    echo "[webhook-discovery] ERROR: cannot read HTTPS cert/key files" >&2
-    exit 1
-  }
-  curl_args+=(--cert "$HTTPS_CERT_FILE" --key "$HTTPS_KEY_FILE")
-else
-  curl_args+=(-k)
-fi
+tls_args=()
+common::build_tls_curl_args "$ENVIRONMENT" "$HTTPS_CERT_FILE" "$HTTPS_KEY_FILE" "webhook-discovery" tls_args
+curl_args+=("${tls_args[@]}")
 
-resp_file="/tmp/n8n-workflows-api.json"
-if ! curl "${curl_args[@]}" "$N8N_API_URL/workflows?limit=250" -o "$resp_file"; then
-  echo "[webhook-discovery] ERROR: failed to fetch workflows from $N8N_API_URL/workflows" >&2
-  exit 1
-fi
+resp_file="$(mktemp)"
+trap 'rm -f "$resp_file"' EXIT
+common::fetch_paginated_collection "$N8N_API_URL/workflows" 250 "$resp_file" curl_args "webhook-discovery"
 
 python3 - "$resp_file" "$WORKFLOW_NAME" "$TARGET" "$REQUIRE_ACTIVE_WORKFLOW" <<'PY'
 import json

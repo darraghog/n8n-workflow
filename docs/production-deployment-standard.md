@@ -77,8 +77,8 @@ Automation:
 Use the existing deployment pipeline pattern:
 
 ```bash
-# Recommended wrapper in this repo
-./scripts/deploy-production.sh <env> [target] [release-id]
+# Operator entrypoint in this repo
+./scripts/deploy-environment.sh <env> [target] [release-id]
 ```
 
 Rules:
@@ -87,9 +87,26 @@ Rules:
 - `prod` must provide HTTPS credentials via:
   - `HTTPS_CERT_FILE=/path/client-cert.pem`
   - `HTTPS_KEY_FILE=/path/client-key.pem`
+- `prod` should pin SMTP credential binding explicitly:
+  - `N8N_SMTP_CREDENTIAL_ID=<credential-id>` (recommended), or
+  - `N8N_SMTP_CREDENTIAL_NAME=<exact-name>`
 
 Then import/update workflows in n8n from packaged JSON only.
 This is automated by `scripts/import-release.sh` in deploy/rollback scripts.
+
+Example invocations:
+
+```bash
+# test/local using latest packaged release
+./scripts/deploy-environment.sh test
+
+# test/local with explicit release
+./scripts/deploy-environment.sh test local 20260315-1631-nogit
+
+# prod with client TLS credentials
+HTTPS_CERT_FILE=/path/client-cert.pem HTTPS_KEY_FILE=/path/client-key.pem \
+  ./scripts/deploy-environment.sh prod <prod-hostname> 20260315-1631-nogit
+```
 
 ### 5.3 Verify after deploy
 
@@ -112,7 +129,10 @@ Discovery details:
 
 Operational note:
 
-- `deploy-production.sh` performs full automation: deploy stack, import/update workflows via API, activate workflows, then run service + webhook smoke tests.
+- `deploy-environment.sh` performs full automation: deploy stack, import/update workflows via API, activate workflows, then run service + webhook smoke tests.
+- Form Trigger smoke verifies endpoint availability (`GET 2xx`) by default.
+- For strict JSON webhook assertions, set `SMOKE_STRICT_JSON=1` and point to a JSON webhook endpoint.
+- Shared script logic is centralized in `scripts/lib/common.sh`; helper scripts are implementation details behind deploy/rollback entrypoints.
 
 ## 6) Rollback standard
 
@@ -127,6 +147,12 @@ Rollback must use a previous known-good workflow artifact:
 Automation:
 
 - Use `./scripts/rollback-release.sh <env> [target] <release-id>`.
+
+Example:
+
+```bash
+./scripts/rollback-release.sh test local 20260315-1559-nogit
+```
 
 Do not hot-edit production workflow logic unless rollback is impossible.
 

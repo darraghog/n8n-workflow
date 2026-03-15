@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib/common.sh"
 DIST_DIR="$ROOT/dist/releases"
 LOCALSERVER_CONFIG_PATH="${LOCALSERVER_CONFIG_PATH:-/home/darraghog/dev/localserver-config}"
 HTTPS_CERT_FILE="${HTTPS_CERT_FILE:-}"
@@ -19,10 +20,7 @@ if [[ -z "$ENVIRONMENT" ]]; then
   exit 1
 fi
 
-case "$ENVIRONMENT" in
-  dev|test|prod) ;;
-  *) echo "[rollback] ERROR: environment must be one of: dev, test, prod"; exit 1 ;;
-esac
+common::validate_environment "$ENVIRONMENT" "rollback"
 
 # For dev/test allow: rollback-release.sh test <release-id>
 if [[ -n "$TARGET" && -z "$RELEASE_ID" && ( "$ENVIRONMENT" == "dev" || "$ENVIRONMENT" == "test" ) ]]; then
@@ -31,7 +29,7 @@ if [[ -n "$TARGET" && -z "$RELEASE_ID" && ( "$ENVIRONMENT" == "dev" || "$ENVIRON
 fi
 
 if [[ -z "$TARGET" ]]; then
-  [[ "$ENVIRONMENT" == "dev" || "$ENVIRONMENT" == "test" ]] && TARGET="local"
+  TARGET="$(common::resolve_target "$ENVIRONMENT" "$TARGET" "rollback")"
 fi
 
 if [[ -z "$RELEASE_ID" ]]; then
@@ -39,34 +37,17 @@ if [[ -z "$RELEASE_ID" ]]; then
   exit 1
 fi
 
-if [[ "$ENVIRONMENT" == "prod" && -z "$TARGET" ]]; then
-  echo "[rollback] ERROR: target is required for prod"
-  exit 1
-fi
-
 RELEASE_DIR="$DIST_DIR/$RELEASE_ID"
 [[ -d "$RELEASE_DIR" ]] || { echo "[rollback] ERROR: release not found: $RELEASE_DIR"; exit 1; }
 
-if [[ "$ENVIRONMENT" == "prod" ]]; then
-  [[ -n "$HTTPS_CERT_FILE" && -n "$HTTPS_KEY_FILE" ]] || {
-    echo "[rollback] ERROR: prod requires HTTPS_CERT_FILE and HTTPS_KEY_FILE";
-    exit 1;
-  }
-  [[ -r "$HTTPS_CERT_FILE" && -r "$HTTPS_KEY_FILE" ]] || {
-    echo "[rollback] ERROR: cannot read HTTPS cert/key files";
-    exit 1;
-  }
-fi
+common::require_prod_tls "$ENVIRONMENT" "$HTTPS_CERT_FILE" "$HTTPS_KEY_FILE" "rollback"
 
 echo "[rollback] Target: $TARGET"
 echo "[rollback] Environment: $ENVIRONMENT"
 echo "[rollback] Release: $RELEASE_ID"
 
 if [[ -x "$LOCALSERVER_CONFIG_PATH/scripts/deploy-to-server.sh" ]]; then
-  DEPLOY_ENV="$ENVIRONMENT"
-  if [[ "$ENVIRONMENT" == "dev" || "$ENVIRONMENT" == "test" ]]; then
-    DEPLOY_ENV="local"
-  fi
+  DEPLOY_ENV="$(common::map_infra_environment "$ENVIRONMENT")"
   echo "[rollback] Re-applying infra baseline on target..."
   "$LOCALSERVER_CONFIG_PATH/scripts/deploy-to-server.sh" "$DEPLOY_ENV" "$TARGET"
 fi

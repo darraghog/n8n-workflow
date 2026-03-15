@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib/common.sh"
 DIST_DIR="$ROOT/dist/releases"
 
 ENVIRONMENT="${1:-}"
@@ -15,34 +16,18 @@ HTTPS_KEY_FILE="${HTTPS_KEY_FILE:-}"
 N8N_SMTP_CREDENTIAL_ID="${N8N_SMTP_CREDENTIAL_ID:-}"
 N8N_SMTP_CREDENTIAL_NAME="${N8N_SMTP_CREDENTIAL_NAME:-}"
 
-if [[ -f "$ROOT/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ROOT/.env"
-  set +a
-  N8N_API_KEY="${N8N_API_KEY:-}"
-  N8N_SMTP_CREDENTIAL_ID="${N8N_SMTP_CREDENTIAL_ID:-}"
-  N8N_SMTP_CREDENTIAL_NAME="${N8N_SMTP_CREDENTIAL_NAME:-}"
-fi
+common::load_project_env "$ROOT"
+N8N_API_KEY="${N8N_API_KEY:-}"
+N8N_SMTP_CREDENTIAL_ID="${N8N_SMTP_CREDENTIAL_ID:-}"
+N8N_SMTP_CREDENTIAL_NAME="${N8N_SMTP_CREDENTIAL_NAME:-}"
 
 if [[ -z "$ENVIRONMENT" ]]; then
   echo "Usage: $(basename "$0") <environment: dev|test|prod> [target] [release-id]"
   exit 1
 fi
 
-case "$ENVIRONMENT" in
-  dev|test|prod) ;;
-  *) echo "[import] ERROR: environment must be one of: dev, test, prod"; exit 1 ;;
-esac
-
-if [[ -z "$TARGET" ]]; then
-  if [[ "$ENVIRONMENT" == "dev" || "$ENVIRONMENT" == "test" ]]; then
-    TARGET="local"
-  else
-    echo "[import] ERROR: target is required for prod"
-    exit 1
-  fi
-fi
+common::validate_environment "$ENVIRONMENT" "import"
+TARGET="$(common::resolve_target "$ENVIRONMENT" "$TARGET" "import")"
 
 if [[ -z "$RELEASE_ID" ]]; then
   if [[ -f "$DIST_DIR/LATEST" ]]; then
@@ -57,30 +42,13 @@ RELEASE_DIR="$DIST_DIR/$RELEASE_ID"
 WORKFLOWS_DIR="$RELEASE_DIR/workflows"
 [[ -d "$WORKFLOWS_DIR" ]] || { echo "[import] ERROR: workflows not found in release: $WORKFLOWS_DIR"; exit 1; }
 
-[[ -n "$N8N_API_KEY" ]] || { echo "[import] ERROR: N8N_API_KEY is required"; exit 1; }
-
-if [[ -z "$N8N_API_URL" ]]; then
-  if [[ "$TARGET" == "local" ]]; then
-    N8N_API_URL="https://127.0.0.1:8444/api/v1"
-  else
-    N8N_API_URL="https://$TARGET:8444/api/v1"
-  fi
-fi
+[[ -n "$N8N_API_KEY" ]] || common::die "import" "N8N_API_KEY is required"
+N8N_API_URL="$(common::resolve_n8n_api_url "$TARGET" "$N8N_API_URL")"
 
 curl_common=(-sS -H "X-N8N-API-KEY: $N8N_API_KEY" -H "Content-Type: application/json")
-if [[ "$ENVIRONMENT" == "prod" ]]; then
-  [[ -n "$HTTPS_CERT_FILE" && -n "$HTTPS_KEY_FILE" ]] || {
-    echo "[import] ERROR: prod requires HTTPS_CERT_FILE and HTTPS_KEY_FILE";
-    exit 1;
-  }
-  [[ -r "$HTTPS_CERT_FILE" && -r "$HTTPS_KEY_FILE" ]] || {
-    echo "[import] ERROR: cannot read HTTPS cert/key files";
-    exit 1;
-  }
-  curl_common+=(--cert "$HTTPS_CERT_FILE" --key "$HTTPS_KEY_FILE")
-else
-  curl_common+=(-k)
-fi
+tls_args=()
+common::build_tls_curl_args "$ENVIRONMENT" "$HTTPS_CERT_FILE" "$HTTPS_KEY_FILE" "import" tls_args
+curl_common+=("${tls_args[@]}")
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -91,11 +59,11 @@ echo "[import] API: $N8N_API_URL"
 echo "[import] Release: $RELEASE_ID"
 
 list_file="$tmp_dir/workflows-list.json"
-curl "${curl_common[@]}" "$N8N_API_URL/workflows?limit=250" -o "$list_file"
+common::fetch_paginated_collection "$N8N_API_URL/workflows" 250 "$list_file" curl_common "import"
 
 if [[ -z "$N8N_SMTP_CREDENTIAL_ID" ]]; then
   cred_file="$tmp_dir/credentials-list.json"
-  if curl "${curl_common[@]}" "$N8N_API_URL/credentials?limit=250" -o "$cred_file" >/dev/null 2>&1; then
+  if common::fetch_paginated_collection "$N8N_API_URL/credentials" 250 "$cred_file" curl_common "import"; then
     N8N_SMTP_CREDENTIAL_ID="$(python3 - "$cred_file" "$N8N_SMTP_CREDENTIAL_NAME" <<'PY'
 import json, sys
 p = json.load(open(sys.argv[1], "r", encoding="utf-8"))
@@ -128,6 +96,10 @@ PY
 )"
     fi
   fi
+fi
+
+if [[ "$ENVIRONMENT" == "prod" && -z "$N8N_SMTP_CREDENTIAL_ID" ]]; then
+  common::die "import" "prod requires explicit SMTP credential (set N8N_SMTP_CREDENTIAL_ID or N8N_SMTP_CREDENTIAL_NAME)"
 fi
 
 if [[ -n "$N8N_SMTP_CREDENTIAL_ID" ]]; then
@@ -216,7 +188,11 @@ PY
     if [[ -z "$wf_id" ]]; then
       echo "[import] ERROR: could not read created workflow id for $workflow_name"
       echo "[import] Create response:"
-      sed -n '1,30p' "$create_file" || true
+      python3 - "$create_file" <<'PY' || true
+import json, sys
+payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
+print(json.dumps(payload, indent=2)[:3000])
+PY
       exit 1
     fi
   fi
@@ -231,14 +207,22 @@ PY
   if [[ ! "$activate_code" =~ ^2 ]]; then
     echo "[import] WARN: /activate returned HTTP $activate_code"
     echo "[import] WARN: activate response:"
-    sed -n '1,20p' "$activate_resp" || true
+    python3 - "$activate_resp" <<'PY' || true
+import json, sys
+payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
+print(json.dumps(payload, indent=2)[:3000])
+PY
     echo "[import] WARN: trying PUT active=true fallback"
     patch_resp="$tmp_dir/activate-patch-$wf_id.json"
     patch_code="$(curl "${curl_common[@]}" -o "$patch_resp" -w "%{http_code}" -X PUT "$N8N_API_URL/workflows/$wf_id" --data '{"active": true}' || true)"
     if [[ ! "$patch_code" =~ ^2 ]]; then
       echo "[import] WARN: PATCH returned HTTP $patch_code"
       echo "[import] WARN: patch response:"
-      sed -n '1,20p' "$patch_resp" || true
+      python3 - "$patch_resp" <<'PY' || true
+import json, sys
+payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
+print(json.dumps(payload, indent=2)[:3000])
+PY
     fi
   fi
 

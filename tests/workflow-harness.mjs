@@ -75,9 +75,19 @@ function testStructure(workflow) {
 function testOutputFieldReferences(workflow) {
   const emailNode = getNode(workflow, "Send Email");
   const text = emailNode.parameters.text;
+  const html = emailNode.parameters.html;
   assert(
     text.includes("{{ $json.json_content }}"),
     "Send Email should reference json_content",
+  );
+  assert.equal(
+    emailNode.parameters.emailFormat,
+    "both",
+    "Send Email should send both text and HTML formats",
+  );
+  assert(
+    html.includes("{{ $json.html_content }}"),
+    "Send Email HTML should reference html_content",
   );
   assert(
     !text.includes("jsonContent"),
@@ -90,6 +100,7 @@ function testBuildResultCodeNode(workflow) {
   const jsCode = build.parameters.jsCode;
   assert(jsCode.includes("output_type_value"), "Build Result should output output_type_value");
   assert(jsCode.includes("json_content"), "Build Result should output json_content");
+  assert(jsCode.includes("html_content"), "Build Result should output html_content");
 
   // Case 1: valid JSON from Ollama text
   const form = {
@@ -111,6 +122,8 @@ function testBuildResultCodeNode(workflow) {
   assert.equal(out1.json.output_type_value, "characters");
   assert.equal(out1.json.email, "user@example.com");
   assert.equal(typeof out1.json.json_content, "string");
+  assert.equal(typeof out1.json.html_content, "string");
+  assert(out1.json.html_content.includes("<table"), "html_content should include a table");
   const parsed1 = JSON.parse(out1.json.json_content);
   assert.equal(parsed1.play, "Hamlet");
 

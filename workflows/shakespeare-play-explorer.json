@@ -73,7 +73,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all().map((i) => i.json || {});\n\nconst form = items.find(\n  (i) => i.play_name || i.output_type || i.email || i['Shakespeare Play'] || i['What would you like?'] || i['Your email address'],\n) || {};\n\nconst ollama = items.find((i) => i.message?.content || i.response || i.model || i.created_at) || {};\n\nconst play_name = form.play_name || form['Shakespeare Play'] || '';\nconst output_type = form.output_type || form['What would you like?'] || 'Key Characters';\nconst email = form.email || form['Your email address'] || '';\nconst output_type_value = output_type === 'Human-centric Themes' ? 'themes' : 'characters';\n\nlet json_content;\nlet parsed_content;\ntry {\n  const raw = ollama.message?.content || ollama.response || JSON.stringify(ollama);\n  const match = typeof raw === 'string' ? raw.match(/\\{[\\s\\S]*\\}/) : null;\n  parsed_content = match\n    ? JSON.parse(match[0])\n    : { play: play_name, requestType: output_type_value, raw };\n  json_content = JSON.stringify(parsed_content, null, 2);\n} catch (e) {\n  parsed_content = {\n    play: play_name,\n    requestType: output_type_value,\n    error: 'Parse failed',\n    raw: ollama.message?.content || ollama.response || null,\n  };\n  json_content = JSON.stringify(parsed_content, null, 2);\n}\n\nconst escapeHtml = (v) => String(v ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\n\nconst title = parsed_content.title || `${output_type} for ${play_name}`;\nconst summary = parsed_content.summary || '';\nconst itemsList = Array.isArray(parsed_content.items) ? parsed_content.items : [];\n\nconst tableRows = itemsList.length\n  ? itemsList.map((item) => `<tr><td style=\\\"padding:8px;border:1px solid #ddd;vertical-align:top;\\\">${escapeHtml(item.name)}</td><td style=\\\"padding:8px;border:1px solid #ddd;vertical-align:top;\\\">${escapeHtml(item.description)}</td></tr>`).join('')\n  : `<tr><td colspan=\\\"2\\\" style=\\\"padding:8px;border:1px solid #ddd;\\\">No rows returned</td></tr>`;\n\nconst html_content = `\n  <div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;\">\n    <h2 style=\"margin-bottom:8px;\">${escapeHtml(title)}</h2>\n    <p style=\"margin:0 0 12px;\"><strong>Play:</strong> ${escapeHtml(play_name)}<br/><strong>Request:</strong> ${escapeHtml(output_type)}</p>\n    ${summary ? `<p style=\"margin:0 0 14px;\"><strong>Summary:</strong> ${escapeHtml(summary)}</p>` : ''}\n    <table style=\"border-collapse:collapse;width:100%;max-width:760px;\">\n      <thead>\n        <tr>\n          <th style=\"text-align:left;padding:8px;border:1px solid #ddd;background:#f3f4f6;\">Name</th>\n          <th style=\"text-align:left;padding:8px;border:1px solid #ddd;background:#f3f4f6;\">Description</th>\n        </tr>\n      </thead>\n      <tbody>${tableRows}</tbody>\n    </table>\n  </div>\n`.trim();\n\nreturn {\n  json: {\n    play_name,\n    output_type,\n    output_type_value,\n    email,\n    json_content,\n    html_content,\n  },\n};\n"
+        "jsCode": "const items = $input.all().map((i) => i.json || {});\n\nconst form = items.find(\n  (i) => i.play_name || i.output_type || i.email || i['Shakespeare Play'] || i['What would you like?'] || i['Your email address'],\n) || {};\n\nconst ollama = items.find((i) => i.message?.content || i.response || i.model || i.created_at) || {};\n\nconst play_name = form.play_name || form['Shakespeare Play'] || '';\nconst output_type = form.output_type || form['What would you like?'] || 'Key Characters';\nconst email = form.email || form['Your email address'] || '';\nconst output_type_value = output_type === 'Human-centric Themes' ? 'themes' : 'characters';\n\nlet json_content;\ntry {\n  const raw = ollama.message?.content || ollama.response || JSON.stringify(ollama);\n  const match = typeof raw === 'string' ? raw.match(/\\{[\\s\\S]*\\}/) : null;\n  const parsed_content = match\n    ? JSON.parse(match[0])\n    : { play: play_name, requestType: output_type_value, raw };\n  json_content = JSON.stringify(parsed_content, null, 2);\n} catch (e) {\n  json_content = JSON.stringify(\n    {\n      play: play_name,\n      requestType: output_type_value,\n      error: 'Parse failed',\n      raw: ollama.message?.content || ollama.response || null,\n    },\n    null,\n    2,\n  );\n}\n\nreturn {\n  json: {\n    play_name,\n    output_type,\n    output_type_value,\n    email,\n    json_content,\n  },\n};\n"
       },
       "id": "code-1",
       "name": "Build Result",
@@ -83,18 +83,28 @@
     },
     {
       "parameters": {
+        "jsCode": "const input = ($input.all()[0] || {}).json || {};\n\nconst escapeHtml = (v) => String(v ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\\\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\n\nlet parsed;\ntry {\n  parsed = JSON.parse(input.json_content || '{}');\n} catch (e) {\n  parsed = {\n    title: `${input.output_type || 'Result'} for ${input.play_name || ''}`,\n    summary: 'Unable to parse model output as JSON.',\n    items: [],\n  };\n}\n\nconst title = parsed.title || `${input.output_type || 'Result'} for ${input.play_name || ''}`;\nconst summary = parsed.summary || '';\nconst itemsList = Array.isArray(parsed.items) ? parsed.items : [];\n\nconst tableRows = itemsList.length\n  ? itemsList\n      .map(\n        (item) =>\n          `<tr><td style=\\\"padding:8px;border:1px solid #ddd;vertical-align:top;\\\">${escapeHtml(item.name)}</td><td style=\\\"padding:8px;border:1px solid #ddd;vertical-align:top;\\\">${escapeHtml(item.description)}</td></tr>`,\n      )\n      .join('')\n  : '<tr><td colspan=\\\"2\\\" style=\\\"padding:8px;border:1px solid #ddd;\\\">No rows returned</td></tr>';\n\nconst html_email_body = `\n  <div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;\">\n    <h2 style=\"margin-bottom:8px;\">${escapeHtml(title)}</h2>\n    <p style=\"margin:0 0 12px;\"><strong>Play:</strong> ${escapeHtml(input.play_name)}<br/><strong>Request:</strong> ${escapeHtml(input.output_type)}</p>\n    ${summary ? `<p style=\"margin:0 0 14px;\"><strong>Summary:</strong> ${escapeHtml(summary)}</p>` : ''}\n    <table style=\"border-collapse:collapse;width:100%;max-width:760px;\">\n      <thead>\n        <tr>\n          <th style=\"text-align:left;padding:8px;border:1px solid #ddd;background:#f3f4f6;\">Name</th>\n          <th style=\"text-align:left;padding:8px;border:1px solid #ddd;background:#f3f4f6;\">Description</th>\n        </tr>\n      </thead>\n      <tbody>${tableRows}</tbody>\n    </table>\n    <hr style=\"margin:16px 0;border:none;border-top:1px solid #e5e7eb;\"/>\n    <p><strong>Raw JSON</strong></p>\n    <pre style=\"white-space:pre-wrap;background:#f8fafc;border:1px solid #e5e7eb;padding:10px;border-radius:6px;\">${escapeHtml(input.json_content || '')}</pre>\n  </div>\n`.trim();\n\nreturn {\n  json: {\n    ...input,\n    html_email_body,\n  },\n};\n"
+      },
+      "id": "code-2",
+      "name": "Build HTML Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
         "fromEmail": "n8n@yourdomain.local",
         "toEmail": "={{ $json.email }}",
         "subject": "=Shakespeare {{ $json.output_type }} – {{ $json.play_name }}",
         "emailFormat": "both",
         "text": "=Here are the {{ $json.output_type }} for {{ $json.play_name }}:\n\n```json\n{{ $json.json_content }}\n```\n\nThis JSON is suitable for rendering in a web page or further processing.",
-        "html": "=<div style=\"font-family:Arial,sans-serif;\">{{ $json.html_content }}</div><hr/><p><strong>Raw JSON</strong></p><pre style=\"white-space:pre-wrap;background:#f8fafc;border:1px solid #e5e7eb;padding:10px;border-radius:6px;\">{{ $json.json_content }}</pre>"
+        "html": "={{ $json.html_email_body }}"
       },
       "id": "send-email-1",
       "name": "Send Email",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
-      "position": [1000, 300]
+      "position": [1220, 300]
     }
   ],
   "connections": {
@@ -117,6 +127,11 @@
       ]
     },
     "Build Result": {
+      "main": [
+        [{ "node": "Build HTML Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build HTML Email": {
       "main": [
         [{ "node": "Send Email", "type": "main", "index": 0 }]
       ]

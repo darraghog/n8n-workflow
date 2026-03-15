@@ -116,6 +116,7 @@ common::fetch_paginated_collection() {
   local tmp_dir
   tmp_dir="$(mktemp -d)"
   local offset=0
+  local cursor=""
   local page=0
   local max_pages=40
   local -a page_files=()
@@ -123,7 +124,12 @@ common::fetch_paginated_collection() {
   while (( page < max_pages )); do
     local sep='?'
     [[ "$endpoint" == *\?* ]] && sep='&'
-    local page_url="${endpoint}${sep}limit=${limit}&offset=${offset}"
+    local page_url="${endpoint}${sep}limit=${limit}"
+    if [[ -n "$cursor" ]]; then
+      page_url="${page_url}&cursor=${cursor}"
+    elif (( offset > 0 )); then
+      page_url="${page_url}&offset=${offset}"
+    fi
     local page_file="$tmp_dir/page-$page.json"
 
     if ! curl "${curl_args[@]}" "$page_url" -o "$page_file"; then
@@ -150,12 +156,27 @@ else:
 PY
 )"
 
+    local next_cursor
+    next_cursor="$(python3 - "$page_file" <<'PY'
+import json, sys
+payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
+if isinstance(payload, dict) and payload.get("nextCursor"):
+    print(str(payload.get("nextCursor")))
+PY
+)"
+
     page_files+=("$page_file")
     ((page += 1))
+
+    if [[ -n "$next_cursor" ]]; then
+      cursor="$next_cursor"
+      continue
+    fi
 
     if [[ "$count" =~ ^[0-9]+$ ]] && (( count < limit )); then
       break
     fi
+    cursor=""
     (( offset += limit ))
   done
 

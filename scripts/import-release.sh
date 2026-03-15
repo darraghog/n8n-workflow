@@ -155,11 +155,12 @@ import json, sys
 payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
 name = sys.argv[2]
 data = payload.get("data", payload if isinstance(payload, list) else [])
-# Prefer non-archived workflow with matching name.
-for w in data:
-    if w.get("name") == name and not bool(w.get("isArchived")):
-        print(w.get("id", ""))
-        break
+# Prefer active non-archived workflow with matching name, then fallback to any non-archived match.
+matches = [w for w in data if w.get("name") == name and not bool(w.get("isArchived"))]
+active = [w for w in matches if bool(w.get("active"))]
+chosen = active[0] if active else (matches[0] if matches else None)
+if chosen:
+    print(chosen.get("id", ""))
 PY
 )"
 

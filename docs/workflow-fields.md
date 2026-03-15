@@ -1,8 +1,8 @@
 # Shakespeare Play Explorer – Field Reference
 
-All workflow fields use `snake_case`. Workflow stages: Form → Ollama + Merge → Build Result → Send Email.
+All workflow fields use `snake_case`. Workflow stages: Form -> Ollama + Merge -> Build Result -> Build HTML Email -> Send Email.
 
-## Canonical Output Object (Build Result → Send Email)
+## Canonical Output Objects
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -10,8 +10,8 @@ All workflow fields use `snake_case`. Workflow stages: Form → Ollama + Merge �
 | `output_type` | string | "Key Characters" or "Human-centric Themes" |
 | `output_type_value` | string | "characters" or "themes" |
 | `email` | string | Recipient email |
-| `json_content` | string | Formatted LLM response JSON |
-| `html_content` | string | User-friendly HTML section with summary + table |
+| `json_content` | string | Formatted LLM response JSON from Build Result |
+| `html_email_body` | string | Pretty HTML table email body from Build HTML Email |
 
 ## Data Flow
 
@@ -25,7 +25,9 @@ Ollama                  → message.content (API response)
             ↓
 Merge (append)          → [form, ollama]
             ↓
-Build Result            → play_name, output_type, output_type_value, email, json_content, html_content
+Build Result            → play_name, output_type, output_type_value, email, json_content
             ↓
-Send Email              ← email, output_type, play_name, json_content, html_content
+Build HTML Email        → play_name, output_type, output_type_value, email, json_content, html_email_body
+            ↓
+Send Email              ← email, output_type, play_name, json_content, html_email_body
 ```

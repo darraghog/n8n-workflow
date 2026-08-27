@@ -173,7 +173,7 @@ The script loads `.env`, sets `N8N_HOST` and `N8N_EDITOR_BASE_URL`, and runs `po
 
 # 5) Prod deploy (requires client TLS credentials)
 HTTPS_CERT_FILE=/path/client-cert.pem HTTPS_KEY_FILE=/path/client-key.pem \
-  ./scripts/deploy-environment.sh prod <prod-hostname> 20260315-1631-nogit
+  ./scripts/deploy-environment.sh prod beeblebox 20260315-1631-nogit
 
 # 6) Webhook smoke with automatic URL discovery
 N8N_API_KEY=<api-key> ./scripts/smoke-test-webhook.sh test local
@@ -226,7 +226,8 @@ To switch to Postgres:
 
 | Service | HTTP | HTTPS |
 |---------|------|-------|
-| n8n | 5678 | 8444 (via tls-proxy) |
+| n8n (local/dev) | 5678 | 8444 (via tls-proxy) |
+| n8n (prod beeblebox) | 5678 | https://beeblebox.taile98462.ts.net (Tailscale Funnel :443) |
 
 ### Scripts (typical)
 

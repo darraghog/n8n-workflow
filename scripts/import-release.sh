@@ -20,6 +20,10 @@ common::load_project_env "$ROOT"
 N8N_API_KEY="${N8N_API_KEY:-}"
 N8N_SMTP_CREDENTIAL_ID="${N8N_SMTP_CREDENTIAL_ID:-}"
 N8N_SMTP_CREDENTIAL_NAME="${N8N_SMTP_CREDENTIAL_NAME:-}"
+N8N_SMTP_CREDENTIAL_NAME="${N8N_SMTP_CREDENTIAL_NAME%\"}"
+N8N_SMTP_CREDENTIAL_NAME="${N8N_SMTP_CREDENTIAL_NAME#\"}"
+N8N_SMTP_CREDENTIAL_NAME="${N8N_SMTP_CREDENTIAL_NAME%\'}"
+N8N_SMTP_CREDENTIAL_NAME="${N8N_SMTP_CREDENTIAL_NAME#\'}"
 
 if [[ -z "$ENVIRONMENT" ]]; then
   echo "Usage: $(basename "$0") <environment: dev|test|prod> [target] [release-id]"
@@ -28,6 +32,10 @@ fi
 
 common::validate_environment "$ENVIRONMENT" "import"
 TARGET="$(common::resolve_target "$ENVIRONMENT" "$TARGET" "import")"
+if [[ "$TARGET" != "local" && -n "$N8N_SMTP_CREDENTIAL_NAME" ]]; then
+  # Local credential ids do not exist on other n8n instances.
+  N8N_SMTP_CREDENTIAL_ID=""
+fi
 
 if [[ -z "$RELEASE_ID" ]]; then
   if [[ -f "$DIST_DIR/LATEST" ]]; then
@@ -61,29 +69,35 @@ echo "[import] Release: $RELEASE_ID"
 list_file="$tmp_dir/workflows-list.json"
 common::fetch_paginated_collection "$N8N_API_URL/workflows" 250 "$list_file" curl_common "import"
 
+if [[ -z "$N8N_SMTP_CREDENTIAL_ID" && -z "$N8N_SMTP_CREDENTIAL_NAME" ]]; then
+  common::die "import" "N8N_SMTP_CREDENTIAL_ID or N8N_SMTP_CREDENTIAL_NAME is required"
+fi
+
 if [[ -z "$N8N_SMTP_CREDENTIAL_ID" ]]; then
   cred_file="$tmp_dir/credentials-list.json"
-  if common::fetch_paginated_collection "$N8N_API_URL/credentials" 250 "$cred_file" curl_common "import"; then
-    N8N_SMTP_CREDENTIAL_ID="$(python3 - "$cred_file" "$N8N_SMTP_CREDENTIAL_NAME" <<'PY'
+  common::fetch_paginated_collection "$N8N_API_URL/credentials" 250 "$cred_file" curl_common "import"
+  N8N_SMTP_CREDENTIAL_ID="$(python3 - "$cred_file" "$N8N_SMTP_CREDENTIAL_NAME" <<'PY'
 import json, sys
 p = json.load(open(sys.argv[1], "r", encoding="utf-8"))
 name = sys.argv[2]
 data = p.get("data", p if isinstance(p, list) else [])
-if name:
-    for c in data:
-        if c.get("name") == name:
-            print(c.get("id", ""))
-            raise SystemExit
-
-# Fallback: first smtp credential.
 for c in data:
-    if str(c.get("type", "")).lower() == "smtp":
+    if c.get("name") == name:
         print(c.get("id", ""))
-        break
+        raise SystemExit
 PY
 )"
-    if [[ -n "$N8N_SMTP_CREDENTIAL_ID" && -z "$N8N_SMTP_CREDENTIAL_NAME" ]]; then
-      N8N_SMTP_CREDENTIAL_NAME="$(python3 - "$cred_file" "$N8N_SMTP_CREDENTIAL_ID" <<'PY'
+fi
+
+[[ -n "$N8N_SMTP_CREDENTIAL_ID" ]] || common::die "import" "could not resolve SMTP credential id from N8N_SMTP_CREDENTIAL_NAME"
+
+if [[ -z "$N8N_SMTP_CREDENTIAL_NAME" ]]; then
+  cred_file="${cred_file:-}"
+  if [[ -z "$cred_file" ]]; then
+    cred_file="$tmp_dir/credentials-list.json"
+    common::fetch_paginated_collection "$N8N_API_URL/credentials" 250 "$cred_file" curl_common "import"
+  fi
+  N8N_SMTP_CREDENTIAL_NAME="$(python3 - "$cred_file" "$N8N_SMTP_CREDENTIAL_ID" <<'PY'
 import json, sys
 p = json.load(open(sys.argv[1], "r", encoding="utf-8"))
 cred_id = sys.argv[2]
@@ -94,23 +108,27 @@ for c in data:
         break
 PY
 )"
-    fi
-  fi
 fi
 
-if [[ "$ENVIRONMENT" == "prod" && -z "$N8N_SMTP_CREDENTIAL_ID" ]]; then
-  common::die "import" "prod requires explicit SMTP credential (set N8N_SMTP_CREDENTIAL_ID or N8N_SMTP_CREDENTIAL_NAME)"
-fi
-
-if [[ -n "$N8N_SMTP_CREDENTIAL_ID" ]]; then
-  echo "[import] SMTP credential binding enabled (id=$N8N_SMTP_CREDENTIAL_ID)"
-else
-  echo "[import] WARN: no SMTP credential found; workflows with Send Email node may fail activation"
-fi
+echo "[import] SMTP credential binding enabled (id=$N8N_SMTP_CREDENTIAL_ID)"
 
 shopt -s nullglob
 workflow_files=("$WORKFLOWS_DIR"/*.json)
 (( ${#workflow_files[@]} > 0 )) || { echo "[import] ERROR: no workflow JSON files found"; exit 1; }
+
+sorted_files=()
+for wf in "${workflow_files[@]}"; do
+  [[ "$(basename "$wf")" == *error* ]] && sorted_files+=("$wf")
+done
+for wf in "${workflow_files[@]}"; do
+  base="$(basename "$wf")"
+  [[ "$base" == *error* || "$base" == *eval* ]] && continue
+  sorted_files+=("$wf")
+done
+for wf in "${workflow_files[@]}"; do
+  [[ "$(basename "$wf")" == *eval* ]] && sorted_files+=("$wf")
+done
+workflow_files=("${sorted_files[@]}")
 
 for wf in "${workflow_files[@]}"; do
   payload_file="$tmp_dir/payload-$(basename "$wf")"
@@ -166,12 +184,31 @@ PY
 
   if [[ -n "$existing_id" ]]; then
     echo "[import] Updating workflow: $workflow_name (id=$existing_id)"
-    curl "${curl_common[@]}" -X PUT "$N8N_API_URL/workflows/$existing_id" --data @"$payload_file" >/dev/null
+    update_file="$tmp_dir/update-$(basename "$wf").json"
+    update_code="$(curl "${curl_common[@]}" -o "$update_file" -w "%{http_code}" -X PUT "$N8N_API_URL/workflows/$existing_id" --data @"$payload_file" || true)"
+    if [[ ! "$update_code" =~ ^2 ]]; then
+      echo "[import] ERROR: update failed HTTP $update_code for $workflow_name"
+      python3 - "$update_file" <<'PY' || true
+import json, sys
+payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
+print(json.dumps(payload, indent=2)[:3000])
+PY
+      exit 1
+    fi
     wf_id="$existing_id"
   else
     echo "[import] Creating workflow: $workflow_name"
     create_file="$tmp_dir/create-$(basename "$wf").json"
-    curl "${curl_common[@]}" -X POST "$N8N_API_URL/workflows" --data @"$payload_file" -o "$create_file"
+    create_code="$(curl "${curl_common[@]}" -o "$create_file" -w "%{http_code}" -X POST "$N8N_API_URL/workflows" --data @"$payload_file" || true)"
+    if [[ ! "$create_code" =~ ^2 ]]; then
+      echo "[import] ERROR: create failed HTTP $create_code for $workflow_name"
+      python3 - "$create_file" <<'PY' || true
+import json, sys
+payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
+print(json.dumps(payload, indent=2)[:3000])
+PY
+      exit 1
+    fi
     wf_id="$(python3 - "$create_file" <<'PY'
 import json, sys
 payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
@@ -250,6 +287,63 @@ PY
     echo "[import] ERROR: workflow did not become active: $workflow_name (id=$wf_id)"
     exit 1
   fi
+done
+
+echo "[import] Binding error workflow..."
+bind_file="$tmp_dir/bind-error.json"
+common::fetch_paginated_collection "$N8N_API_URL/workflows" 250 "$bind_file" curl_common "import"
+python3 - "$bind_file" <<'PY' > "$tmp_dir/bind-ids.txt"
+import json, sys
+payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
+data = payload.get("data", payload if isinstance(payload, list) else [])
+
+def find(name, active_only=False):
+    matches = [w for w in data if w.get("name") == name and not w.get("isArchived")]
+    if active_only:
+        matches = [w for w in matches if w.get("active")] or matches
+    else:
+        active = [w for w in matches if w.get("active")]
+        matches = active or matches
+    return matches[0]["id"] if matches else ""
+
+err = find("Shakespeare Play Explorer – Operator Errors")
+if not err:
+    raise SystemExit("missing error workflow after import")
+print(err)
+for name in ("Shakespeare Play Explorer", "Shakespeare Play Explorer Eval"):
+    wf_id = find(name)
+    if wf_id:
+        print(wf_id)
+PY
+error_id="$(sed -n '1p' "$tmp_dir/bind-ids.txt")"
+mapfile -t bind_targets < <(sed -n '2,$p' "$tmp_dir/bind-ids.txt")
+[[ -n "$error_id" ]] || common::die "import" "could not resolve error workflow id"
+for main_id in "${bind_targets[@]}"; do
+  [[ -n "$main_id" ]] || continue
+  main_get="$tmp_dir/main-get-$main_id.json"
+  curl "${curl_common[@]}" "$N8N_API_URL/workflows/$main_id" -o "$main_get"
+  python3 - "$main_get" "$error_id" "$tmp_dir/main-patch-$main_id.json" <<'PY'
+import json, sys
+src, error_id, dst = sys.argv[1:4]
+payload = json.load(open(src, "r", encoding="utf-8"))
+wf = payload.get("data", payload)
+settings = dict(wf.get("settings") or {})
+settings["errorWorkflow"] = str(error_id)
+json.dump({
+    "name": wf.get("name"),
+    "nodes": wf.get("nodes", []),
+    "connections": wf.get("connections", {}),
+    "settings": settings,
+}, open(dst, "w", encoding="utf-8"))
+PY
+  bind_code="$(curl "${curl_common[@]}" -o "$tmp_dir/bind-resp-$main_id.json" -w "%{http_code}" -X PUT "$N8N_API_URL/workflows/$main_id" --data @"$tmp_dir/main-patch-$main_id.json" || true)"
+  if [[ ! "$bind_code" =~ ^2 ]]; then
+    echo "[import] ERROR: failed to bind error workflow onto $main_id (HTTP $bind_code)"
+    exit 1
+  fi
+  curl "${curl_common[@]}" -X POST "$N8N_API_URL/workflows/$main_id/deactivate" >/dev/null 2>&1 || true
+  curl "${curl_common[@]}" -X POST "$N8N_API_URL/workflows/$main_id/activate" >/dev/null
+  echo "[import] Bound error workflow id=$error_id onto workflow id=$main_id"
 done
 
 echo "[import] PASS: workflows imported/updated and activated from release $RELEASE_ID"

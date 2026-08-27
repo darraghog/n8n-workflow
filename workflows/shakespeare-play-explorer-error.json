@@ -1,0 +1,66 @@
+{
+  "name": "Shakespeare Play Explorer – Operator Errors",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "error-trigger-1",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const redact = (value) => String(value ?? '').replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi, '[redacted-email]');\nconst input = ($input.first() || {}).json || {};\nconst execution = input.execution || input;\nconst error = execution.error || {};\nconst workflow = execution.workflow || input.workflow || {};\nconst executionId = execution.id || input.executionId || '';\nconst nodeName = error.node || execution.lastNodeExecuted || '';\nconst message = redact(error.message || input.message || 'Unknown error');\nconst workflowName = workflow.name || 'Shakespeare Play Explorer';\nconst text = [\n  'n8n workflow error',\n  `workflow: ${workflowName}`,\n  `execution_id: ${executionId}`,\n  `node: ${nodeName}`,\n  `error: ${message}`,\n].join('\\n');\nreturn {\n  json: {\n    workflow_name: workflowName,\n    execution_id: executionId,\n    node: nodeName,\n    error: message,\n    subject: `n8n error: ${workflowName} [${executionId || 'unknown'}]`,\n    text,\n  },\n};\n"
+      },
+      "id": "format-error-1",
+      "name": "Format Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM_EMAIL }}",
+        "toEmail": "={{ $env.OPERATOR_EMAIL }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "notify-operator-1",
+      "name": "Notify Operator",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [680, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [{ "node": "Format Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format Error": {
+      "main": [
+        [{ "node": "Notify Operator", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 60
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "app": "shakespeare-play-explorer"
+  },
+  "tags": []
+}

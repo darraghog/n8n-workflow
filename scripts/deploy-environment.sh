@@ -17,7 +17,7 @@ RELEASE_ID="${3:-}"
 if [[ -z "$ENVIRONMENT" ]]; then
   echo "Usage: $(basename "$0") <environment: dev|test|prod> [target] [release-id]"
   echo "Example: $(basename "$0") test local"
-  echo "Example: HTTPS_CERT_FILE=/path/cert.pem HTTPS_KEY_FILE=/path/key.pem $(basename "$0") prod darragh-pc 20260315-1545-a1b2c3d"
+  echo "Example: HTTPS_CERT_FILE=/path/cert.pem HTTPS_KEY_FILE=/path/key.pem $(basename "$0") prod beeblebox 20260315-1545-a1b2c3d"
   exit 1
 fi
 
@@ -36,6 +36,10 @@ fi
 
 RELEASE_DIR="$DIST_DIR/$RELEASE_ID"
 [[ -d "$RELEASE_DIR" ]] || { echo "[deploy] ERROR: missing release dir $RELEASE_DIR"; exit 1; }
+ARCHIVE="$DIST_DIR/$RELEASE_ID.tar.gz"
+if [[ -f "$ARCHIVE" ]]; then
+  common::verify_release_checksum "$ARCHIVE" "deploy"
+fi
 [[ -x "$LOCALSERVER_CONFIG_PATH/scripts/deploy-to-server.sh" ]] || {
   echo "[deploy] ERROR: deploy script not found at $LOCALSERVER_CONFIG_PATH/scripts/deploy-to-server.sh"
   exit 1
@@ -65,23 +69,25 @@ echo "[deploy] Post-deploy smoke checks..."
 echo "[deploy] Importing and activating workflows in n8n..."
 "$ROOT/scripts/import-release.sh" "$ENVIRONMENT" "$TARGET" "$RELEASE_ID"
 
+SMOKE_REQUIRED="$(common::webhook_smoke_required "$ENVIRONMENT")"
+
 if [[ -n "${SMOKE_WEBHOOK_URL:-}" ]]; then
   echo "[deploy] Running webhook smoke test..."
   if ! "$ROOT/scripts/smoke-test-webhook.sh" "$ENVIRONMENT" "$TARGET" "$SMOKE_WEBHOOK_URL"; then
-    if [[ "${REQUIRE_WEBHOOK_SMOKE_PASS:-0}" == "1" ]]; then
-      echo "[deploy] ERROR: webhook smoke test failed and REQUIRE_WEBHOOK_SMOKE_PASS=1"
+    if [[ "$SMOKE_REQUIRED" == "1" ]]; then
+      echo "[deploy] ERROR: webhook smoke test failed"
       exit 1
     fi
-    echo "[deploy] WARN: webhook smoke test failed; continuing (set REQUIRE_WEBHOOK_SMOKE_PASS=1 to fail deployment)."
+    echo "[deploy] WARN: webhook smoke test failed; continuing (dev warn-only)."
   fi
 else
   echo "[deploy] Running webhook smoke test with URL discovery..."
   if ! "$ROOT/scripts/smoke-test-webhook.sh" "$ENVIRONMENT" "$TARGET"; then
-    if [[ "${REQUIRE_WEBHOOK_SMOKE_PASS:-0}" == "1" ]]; then
-      echo "[deploy] ERROR: webhook smoke test failed and REQUIRE_WEBHOOK_SMOKE_PASS=1"
+    if [[ "$SMOKE_REQUIRED" == "1" ]]; then
+      echo "[deploy] ERROR: webhook smoke test failed"
       exit 1
     fi
-    echo "[deploy] WARN: webhook smoke test failed; continuing (set REQUIRE_WEBHOOK_SMOKE_PASS=1 to fail deployment)."
+    echo "[deploy] WARN: webhook smoke test failed; continuing (dev warn-only)."
   fi
 fi
 
@@ -90,6 +96,6 @@ echo "[deploy] Deployment completed with automated import+activation."
 if [[ "$TARGET" == "local" ]]; then
   echo "  URL: https://localhost:8444 (or your host mapping)"
 else
-  echo "  URL: https://$TARGET:8444"
+  echo "  URL: $(common::resolve_n8n_base_url "$TARGET")"
 fi
 echo "  Artifact: $RELEASE_DIR/workflows/*.json"

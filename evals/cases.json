@@ -1,0 +1,61 @@
+{
+  "schema_keys": ["play", "requestType", "title", "items", "summary"],
+  "cases": [
+    {
+      "id": "hamlet-characters",
+      "play_name": "Hamlet",
+      "output_type": "Key Characters",
+      "email": "eval@example.com",
+      "expect_requestType": "characters"
+    },
+    {
+      "id": "hamlet-themes",
+      "play_name": "Hamlet",
+      "output_type": "Human-centric Themes",
+      "email": "eval@example.com",
+      "expect_requestType": "themes"
+    },
+    {
+      "id": "macbeth-characters",
+      "play_name": "Macbeth",
+      "output_type": "Key Characters",
+      "email": "eval@example.com",
+      "expect_requestType": "characters"
+    },
+    {
+      "id": "romeo-juliet-characters",
+      "play_name": "Romeo and Juliet",
+      "output_type": "Key Characters",
+      "email": "eval@example.com",
+      "expect_requestType": "characters"
+    },
+    {
+      "id": "king-lear-themes",
+      "play_name": "King Lear",
+      "output_type": "Human-centric Themes",
+      "email": "eval@example.com",
+      "expect_requestType": "themes"
+    },
+    {
+      "id": "othello-characters",
+      "play_name": "Othello",
+      "output_type": "Key Characters",
+      "email": "eval@example.com",
+      "expect_requestType": "characters"
+    },
+    {
+      "id": "twelfth-night-themes",
+      "play_name": "Twelfth Night",
+      "output_type": "Human-centric Themes",
+      "email": "eval@example.com",
+      "expect_requestType": "themes"
+    },
+    {
+      "id": "midsummer-characters",
+      "play_name": "A Midsummer Night's Dream",
+      "output_type": "Key Characters",
+      "email": "eval@example.com",
+      "expect_requestType": "characters"
+    }
+  ]
+}

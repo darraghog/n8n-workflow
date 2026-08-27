@@ -54,15 +54,17 @@ Before promoting to prod, all must pass:
 1. `node tests/workflow-harness.mjs`
 2. Workflow JSON parse check:
    - `python3 -m json.tool workflows/shakespeare-play-explorer.json >/dev/null`
-3. Test environment execution:
-   - Form submission succeeds
-   - `Build Result` contains canonical fields:
-     - `play_name`, `output_type`, `output_type_value`, `email`, `json_content`
-   - `Send Email` succeeds with non-empty `toEmail`
+3. Honest smoke (not UI 401):
+   - n8n `/healthz` returns 2xx
+   - Ollama `/api/tags` returns 2xx (required in test/prod)
+   - Test webhook `POST /webhook/shakespeare-play-explorer-test` returns JSON with `request_id`, `status`, `result.{play,requestType,title,items,summary}` and does **not** send email
+4. Recipient allowlist and `SMTP_FROM_EMAIL` / `OPERATOR_EMAIL` are set in n8n env
+5. Optional live eval: `node evals/run.mjs` against the test webhook
 
 Automation:
 
 - Run `./scripts/preflight.sh <env>` to execute all required local gates.
+- CI runs harness + JSON parse + secret-scan.
 
 ## 5) Production deployment procedure
 
@@ -84,12 +86,12 @@ Use the existing deployment pipeline pattern:
 Rules:
 
 - `dev` and `test` may use `local` target (default if omitted).
-- `prod` must provide HTTPS credentials via:
-  - `HTTPS_CERT_FILE=/path/client-cert.pem`
-  - `HTTPS_KEY_FILE=/path/client-key.pem`
-- `prod` should pin SMTP credential binding explicitly:
+- `prod` defaults to **beeblebox** (public URL `https://beeblebox.taile98462.ts.net`).
+- Client TLS certs are optional for beeblebox Funnel. Set `HTTPS_REQUIRE_CLIENT_CERT=1` only if the target still uses mTLS.
+- Pin SMTP credential binding explicitly:
   - `N8N_SMTP_CREDENTIAL_ID=<credential-id>` (recommended), or
   - `N8N_SMTP_CREDENTIAL_NAME=<exact-name>`
+  Required in every environment (no “first SMTP credential” fallback).
 
 Then import/update workflows in n8n from packaged JSON only.
 This is automated by `scripts/import-release.sh` in deploy/rollback scripts.
@@ -103,36 +105,28 @@ Example invocations:
 # test/local with explicit release
 ./scripts/deploy-environment.sh test local 20260315-1631-nogit
 
-# prod with client TLS credentials
-HTTPS_CERT_FILE=/path/client-cert.pem HTTPS_KEY_FILE=/path/client-key.pem \
-  ./scripts/deploy-environment.sh prod <prod-hostname> 20260315-1631-nogit
+# prod (beeblebox Tailscale Funnel)
+./scripts/deploy-environment.sh prod beeblebox 20260315-1631-nogit
 ```
 
 ### 5.3 Verify after deploy
 
-- n8n service healthy (`/healthz` on backend port).
-- Workflow active and production form URL reachable.
-- One webhook smoke submission returns expected JSON keys.
-- Optional: full end-to-end submission confirms downstream email delivery.
+- n8n `/healthz` returns **2xx** (homepage 401 is not health).
+- Ollama `/api/tags` returns 2xx from the operator host (test/prod).
+- Test webhook POST returns expected JSON keys; form GET is not sufficient.
+- Optional: allowlisted form submission confirms downstream email delivery.
+- Package checksum `*.tar.gz.sha256` is verified before deploy/rollback.
 
 Automation:
 
 - Service check: `./scripts/smoke-test.sh <env> [target]`
-- Webhook JSON check (auto-discovery): `N8N_API_KEY=<api-key> ./scripts/smoke-test-webhook.sh <env> [target]`
+- Test webhook JSON check: `EVAL_WEBHOOK_TOKEN=<token> ./scripts/smoke-test-webhook.sh <env> [target]`
+- Live evals: `EVAL_WEBHOOK_URL=<url> EVAL_WEBHOOK_TOKEN=<token> node evals/run.mjs`
 
-Discovery details:
+Gating:
 
-- Script resolves workflow by `WORKFLOW_NAME` (default: `Shakespeare Play Explorer`)
-- Reads Form Trigger path from `parameters.path` or `parameters.options.path`, fallback `webhookId`
-- Builds URL as `https://<target>:8444/form/<path-or-webhookId>`
-- Requires workflow to be active by default (`REQUIRE_ACTIVE_WORKFLOW=1`)
-
-Operational note:
-
-- `deploy-environment.sh` performs full automation: deploy stack, import/update workflows via API, activate workflows, then run service + webhook smoke tests.
-- Form Trigger smoke verifies endpoint availability (`GET 2xx`) by default.
-- For strict JSON webhook assertions, set `SMOKE_STRICT_JSON=1` and point to a JSON webhook endpoint.
-- Shared script logic is centralized in `scripts/lib/common.sh`; helper scripts are implementation details behind deploy/rollback entrypoints.
+- `test` and `prod`: webhook smoke must pass (override with `REQUIRE_WEBHOOK_SMOKE_PASS=0`).
+- `dev`: webhook smoke warnings do not fail deploy unless `REQUIRE_WEBHOOK_SMOKE_PASS=1`.
 
 ## 6) Rollback standard
 
@@ -147,6 +141,8 @@ Rollback must use a previous known-good workflow artifact:
 Automation:
 
 - Use `./scripts/rollback-release.sh <env> [target] <release-id>`.
+- Writes an audit line to `dist/releases/AUDIT.log` (`ROLLBACK_REASON` optional).
+- Re-verifies the release `sha256` when the checksum file is present.
 
 Example:
 
@@ -172,10 +168,12 @@ Do not hot-edit production workflow logic unless rollback is impossible.
 
 - Never commit secrets (`.env`, SMTP passwords, encryption keys).
 - Keep sender addresses and credential IDs environment-specific.
-- Validate that exported workflow JSON contains no embedded secrets.
+- Fail closed: empty `EMAIL_ALLOWLIST` sends no user email. Operator alerts go only to `OPERATOR_EMAIL`.
+- Validate that exported workflow JSON contains no embedded secrets (`scripts/secret-scan.sh`).
 
 ## 9) Operational SLO checks (recommended)
 
-- Deployment success rate: 100% of prod releases pass smoke test.
-- Time to rollback: < 15 minutes.
+- Deployment success rate: 100% of prod releases pass `/healthz` + test-webhook smoke.
+- Time to rollback: < 15 minutes (checksummed artifact + audit line).
 - Field contract regressions: 0 (guarded by harness).
+- Eval: track `schema_fail` and `groundedness_fail` from `node evals/run.mjs`.

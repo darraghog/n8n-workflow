@@ -56,12 +56,13 @@ manifest = {
     "environment": environment,
     "workflows": workflow_entries,
     "compatibility": {
-        "n8n_min_version": "1.0.0",
+        "n8n_min_version": "2.33.7",
         "podman_compose_required": True
     },
     "checks": {
         "workflow_harness": "pass",
-        "json_parse": "pass"
+        "json_parse": "pass",
+        "secret_scan": "pass"
     }
 }
 
@@ -72,8 +73,14 @@ PY
 
 echo "$RELEASE_ID" > "$DIST_DIR/LATEST"
 tar -czf "$DIST_DIR/$RELEASE_ID.tar.gz" -C "$DIST_DIR" "$RELEASE_ID"
+if command -v sha256sum >/dev/null 2>&1; then
+  (cd "$DIST_DIR" && sha256sum "$RELEASE_ID.tar.gz" > "$RELEASE_ID.tar.gz.sha256")
+else
+  (cd "$DIST_DIR" && shasum -a 256 "$RELEASE_ID.tar.gz" > "$RELEASE_ID.tar.gz.sha256")
+fi
 
 echo "[package] PASS"
 echo "[package] Release ID: $RELEASE_ID"
 echo "[package] Directory: $OUT_DIR"
 echo "[package] Archive: $DIST_DIR/$RELEASE_ID.tar.gz"
+echo "[package] Checksum: $DIST_DIR/$RELEASE_ID.tar.gz.sha256"

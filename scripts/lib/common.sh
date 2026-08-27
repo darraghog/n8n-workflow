@@ -28,7 +28,16 @@ common::resolve_target() {
     echo "local"
     return 0
   fi
-  common::die "$tag" "target is required for prod"
+  echo "${PROD_TARGET:-beeblebox}"
+}
+
+common::resolve_public_host() {
+  local target="$1"
+  case "$target" in
+    local) echo "127.0.0.1" ;;
+    beeblebox) echo "beeblebox.taile98462.ts.net" ;;
+    *) echo "$target" ;;
+  esac
 }
 
 common::load_project_env() {
@@ -54,18 +63,32 @@ common::require_prod_tls() {
   local cert="$2"
   local key="$3"
   local tag="$4"
-  if [[ "$env" == "prod" ]]; then
+  if [[ -n "$cert" || -n "$key" ]]; then
     common::require_readable_file "$cert" "$tag" "HTTPS_CERT_FILE"
     common::require_readable_file "$key" "$tag" "HTTPS_KEY_FILE"
+  elif [[ "$env" == "prod" && "${HTTPS_REQUIRE_CLIENT_CERT:-0}" == "1" ]]; then
+    common::die "$tag" "HTTPS_CERT_FILE and HTTPS_KEY_FILE are required when HTTPS_REQUIRE_CLIENT_CERT=1"
   fi
 }
 
 common::resolve_n8n_base_url() {
   local target="$1"
-  if [[ "$target" == "local" ]]; then
+  local host
+  local override="${N8N_BASE_URL:-${N8N_PUBLIC_BASE_URL:-}}"
+  # Loopback overrides are for local operator use; never apply them to remote targets.
+  if [[ -n "$override" ]]; then
+    if [[ "$target" == "local" ]] || [[ ! "$override" =~ 127\.0\.0\.1|localhost ]]; then
+      echo "${override%/}"
+      return 0
+    fi
+  fi
+  host="$(common::resolve_public_host "$target")"
+  if [[ "$host" == "beeblebox.taile98462.ts.net" ]]; then
+    echo "https://beeblebox.taile98462.ts.net"
+  elif [[ "$target" == "local" ]]; then
     echo "https://127.0.0.1:8444"
   else
-    echo "https://$target:8444"
+    echo "https://$host:8444"
   fi
 }
 
@@ -96,12 +119,43 @@ common::build_tls_curl_args() {
   local out_var="$5"
   local -n out="$out_var"
   out=()
-  if [[ "$env" == "prod" ]]; then
-    common::require_prod_tls "$env" "$cert" "$key" "$tag"
+  if [[ -n "$cert" && -n "$key" ]]; then
+    common::require_readable_file "$cert" "$tag" "HTTPS_CERT_FILE"
+    common::require_readable_file "$key" "$tag" "HTTPS_KEY_FILE"
     out+=(--cert "$cert" --key "$key")
+  elif [[ "$env" == "prod" ]]; then
+    : # public Tailscale Funnel — verify server TLS
   else
     # Homelab/local certs are often self-signed.
     out+=(-k)
+  fi
+}
+
+common::webhook_smoke_required() {
+  local env="$1"
+  if [[ -n "${REQUIRE_WEBHOOK_SMOKE_PASS:-}" ]]; then
+    echo "$REQUIRE_WEBHOOK_SMOKE_PASS"
+    return 0
+  fi
+  if [[ "$env" == "dev" ]]; then
+    echo "0"
+  else
+    echo "1"
+  fi
+}
+
+common::verify_release_checksum() {
+  local archive="$1"
+  local tag="$2"
+  local dir base
+  dir="$(dirname "$archive")"
+  base="$(basename "$archive")"
+  [[ -f "$archive" ]] || common::die "$tag" "missing release archive: $archive"
+  [[ -f "$dir/$base.sha256" ]] || common::die "$tag" "missing checksum file: $dir/$base.sha256"
+  if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$dir" && sha256sum -c "$base.sha256" --quiet) || common::die "$tag" "checksum mismatch for $archive"
+  else
+    (cd "$dir" && shasum -a 256 -c "$base.sha256" --quiet) || common::die "$tag" "checksum mismatch for $archive"
   fi
 }
 

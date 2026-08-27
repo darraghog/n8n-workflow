@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Workflow harness
+        run: node tests/workflow-harness.mjs
+      - name: Workflow JSON syntax
+        run: python3 -m json.tool workflows/*.json >/dev/null
+      - name: Secret scan
+        run: bash scripts/secret-scan.sh

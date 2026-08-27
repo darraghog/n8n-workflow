@@ -16,6 +16,7 @@ echo "[preflight] Environment: $ENVIRONMENT"
 [[ -f "$ROOT/docs/workflow-fields.md" ]] || { echo "[preflight] ERROR: missing docs/workflow-fields.md"; exit 1; }
 [[ -f "$ROOT/docs/credentials.md" ]] || { echo "[preflight] ERROR: missing docs/credentials.md"; exit 1; }
 [[ -f "$ROOT/docs/production-deployment-standard.md" ]] || { echo "[preflight] ERROR: missing docs/production-deployment-standard.md"; exit 1; }
+[[ -f "$ROOT/workflows/shakespeare-play-explorer-error.json" ]] || { echo "[preflight] ERROR: missing operator error workflow"; exit 1; }
 
 echo "[preflight] Running workflow harness..."
 node "$ROOT/tests/workflow-harness.mjs"
@@ -28,5 +29,12 @@ for f in "${json_files[@]}"; do
   python3 -m json.tool "$f" >/dev/null
   echo "[preflight] OK $(basename "$f")"
 done
+
+echo "[preflight] Running secret scan..."
+bash "$ROOT/scripts/secret-scan.sh"
+
+echo "[preflight] Validating eval cases..."
+[[ -f "$ROOT/evals/cases.json" ]] || { echo "[preflight] ERROR: missing evals/cases.json"; exit 1; }
+python3 -m json.tool "$ROOT/evals/cases.json" >/dev/null
 
 echo "[preflight] PASS"

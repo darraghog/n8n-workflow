@@ -16,7 +16,7 @@ if [[ -z "$ENVIRONMENT" ]]; then
   echo "Usage: $(basename "$0") <environment: dev|test|prod> [target] <release-id>"
   echo "Example: $(basename "$0") test local 20260315-1545-a1b2c3d"
   echo "Example: $(basename "$0") test 20260315-1545-a1b2c3d"
-  echo "Example: HTTPS_CERT_FILE=/path/cert.pem HTTPS_KEY_FILE=/path/key.pem $(basename "$0") prod darragh-pc 20260315-1545-a1b2c3d"
+  echo "Example: HTTPS_CERT_FILE=/path/cert.pem HTTPS_KEY_FILE=/path/key.pem $(basename "$0") prod beeblebox 20260315-1545-a1b2c3d"
   exit 1
 fi
 
@@ -39,6 +39,16 @@ fi
 
 RELEASE_DIR="$DIST_DIR/$RELEASE_ID"
 [[ -d "$RELEASE_DIR" ]] || { echo "[rollback] ERROR: release not found: $RELEASE_DIR"; exit 1; }
+ARCHIVE="$DIST_DIR/$RELEASE_ID.tar.gz"
+if [[ -f "$ARCHIVE" ]]; then
+  common::verify_release_checksum "$ARCHIVE" "rollback"
+fi
+
+AUDIT_LOG="$DIST_DIR/AUDIT.log"
+{
+  echo "$(date -Iseconds) rollback env=$ENVIRONMENT target=$TARGET release=$RELEASE_ID reason=${ROLLBACK_REASON:-unspecified}"
+} >> "$AUDIT_LOG"
+echo "[rollback] Audit: $AUDIT_LOG"
 
 common::require_prod_tls "$ENVIRONMENT" "$HTTPS_CERT_FILE" "$HTTPS_KEY_FILE" "rollback"
 
@@ -63,12 +73,13 @@ echo "[rollback] Importing and activating workflows from rollback release..."
 
 echo "[rollback] Running smoke tests after rollback..."
 "$ROOT/scripts/smoke-test.sh" "$ENVIRONMENT" "$TARGET"
+SMOKE_REQUIRED="$(common::webhook_smoke_required "$ENVIRONMENT")"
 if ! "$ROOT/scripts/smoke-test-webhook.sh" "$ENVIRONMENT" "$TARGET"; then
-  if [[ "${REQUIRE_WEBHOOK_SMOKE_PASS:-0}" == "1" ]]; then
-    echo "[rollback] ERROR: webhook smoke test failed and REQUIRE_WEBHOOK_SMOKE_PASS=1"
+  if [[ "$SMOKE_REQUIRED" == "1" ]]; then
+    echo "[rollback] ERROR: webhook smoke test failed"
     exit 1
   fi
-  echo "[rollback] WARN: webhook smoke test failed; continuing (set REQUIRE_WEBHOOK_SMOKE_PASS=1 to make rollback fail)."
+  echo "[rollback] WARN: webhook smoke test failed; continuing (dev warn-only)."
 fi
 
 echo "[rollback] PASS"

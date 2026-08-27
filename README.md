@@ -1,42 +1,35 @@
 # Shakespeare Play Explorer (n8n)
 
-An n8n workflow that lets users enter a Shakespeare play name, choose between key characters or human-centric themes, and receive a JSON-formatted result via email. Uses Ollama for local LLM responses.
+Form in, Ollama JSON out, email only if the recipient is allowlisted.
 
-## Prerequisites
+n8n will not activate a Form Trigger and Respond to Webhook in the same workflow, so this is three workflows:
 
-- n8n instance (see [PROJECT-INSTRUCTIONS.md](PROJECT-INSTRUCTIONS.md) for homelab deployment)
-- Ollama running on the host with a model (e.g. `ollama run llama3.2`)
-- SMTP credentials for sending email
+| Workflow | Trigger | Email |
+|----------|---------|-------|
+| **Shakespeare Play Explorer** | Form `/form/shakespeare-play-explorer` | Yes, if allowlisted and `SMTP_FROM_EMAIL` is set |
+| **Shakespeare Play Explorer Eval** | `POST /webhook/shakespeare-play-explorer-test` | Never |
+| **Shakespeare Play Explorer – Operator Errors** | Error Trigger | `OPERATOR_EMAIL` only |
 
-## Setup
+Edit via `scripts/generate-main-workflow.py` (writes the form + eval JSON). Field contract: [docs/workflow-fields.md](docs/workflow-fields.md).
 
-1. **Configure Send Email node**
+## Live URLs
 
-   - Create SMTP credentials in n8n (Settings → Credentials)
-   - Open the Send Email node and select your SMTP credential
-   - Update the "From Email" address to your desired sender
+| Env | Form | Eval webhook |
+|-----|------|----------------|
+| Local | http://127.0.0.1:5678/form/shakespeare-play-explorer | `POST /webhook/shakespeare-play-explorer-test` |
+| Prod (beeblebox) | https://beeblebox.taile98462.ts.net/form/shakespeare-play-explorer | `POST https://beeblebox.taile98462.ts.net/webhook/shakespeare-play-explorer-test` |
 
-2. **Configure Ollama connection**
-
-   - With n8n in Docker/podman, Ollama on the host: the workflow uses `http://host.docker.internal:11434`
-   - If n8n runs on the host: change the Ollama node URL to `http://localhost:11434`
-   - Ensure a model is pulled: `ollama run llama3.2`
-
-3. **Deploy**
-
-   - Use the automated deployment flow below. It imports/updates and activates workflows automatically.
+Eval auth: header `X-Eval-Token` or JSON `eval_token`, matching `$env.EVAL_WEBHOOK_TOKEN`.
 
 ## Form fields
 
-| Field        | Description                                                              |
-|-------------|----------------------------------------------------------------------------|
-| Shakespeare Play | Play name (e.g. Hamlet, Macbeth, Romeo and Juliet)                       |
-| What would you like? | Key Characters or Human-centric Themes                             |
-| Your email   | Where to send the result                                                  |
+| Field | Description |
+|-------|-------------|
+| Shakespeare Play | Letters, numbers, spaces, `.,'-`; max 80 |
+| What would you like? | Key Characters or Human-centric Themes |
+| Your email | Must match `EMAIL_ALLOWLIST` or no mail is sent |
 
-## Output format
-
-The workflow returns JSON suitable for web pages or email, e.g.:
+## Output
 
 ```json
 {
@@ -50,79 +43,56 @@ The workflow returns JSON suitable for web pages or email, e.g.:
 }
 ```
 
-Email output includes:
-- Plain-text JSON section for machine readability
-- HTML section with a user-friendly table (`Name`, `Description`)
+Form emails include `request_id`, plain-text JSON, and an HTML table. The eval webhook returns `{ request_id, status, play_name, result, … }` and never includes `email`.
 
-## Credentials
+`status` is one of: `ok`, `validation_error`, `email_rejected`, `ollama_unavailable`, `parse_fail`, `schema_fail`, `groundedness_fail`.
 
-See [docs/credentials.md](docs/credentials.md) for required credentials.
+## Runtime (n8n container env)
 
-## Production standard
+These must be inside the n8n process (`$env`). `localserver-config` `compose/n8n/compose.yaml` passes them through; `N8N_BLOCK_ENV_ACCESS_IN_NODE` must be `false`.
 
-Use [docs/production-deployment-standard.md](docs/production-deployment-standard.md) as the source of truth for packaging, promotion, deployment, verification, and rollback.
+| Variable | Purpose |
+|----------|---------|
+| `SMTP_FROM_EMAIL` | From address; empty disables form mail |
+| `OPERATOR_EMAIL` | Error-workflow recipient |
+| `EMAIL_ALLOWLIST` | Exact emails and/or `@domain.com`. Empty denies all. `*` allows all (unsafe). |
+| `EVAL_WEBHOOK_TOKEN` | Shared secret for the eval webhook |
+| `OLLAMA_BASE_URL` | Default `http://host.docker.internal:11434` |
+| `OLLAMA_MODEL` | Default `llama3.2` (use a tag that is **pulled on that host**) |
 
-## Deployment commands
+Create an SMTP credential in n8n (not in git). Import binds it with `N8N_SMTP_CREDENTIAL_ID` or `N8N_SMTP_CREDENTIAL_NAME`. Remote targets resolve **by name** — local credential ids do not exist on beeblebox.
 
-Operator entrypoints (recommended):
+See [docs/credentials.md](docs/credentials.md) and [.env.example](.env.example).
 
-```bash
-# deploy (runs preflight/package/import/activation/smoke internally as needed)
-./scripts/deploy-environment.sh <env> [target] [release-id]
+## Deploy
 
-# rollback
-./scripts/rollback-release.sh <env> [target] <release-id>
-```
-
-Internal helper scripts (normally not called directly): `preflight.sh`, `package-release.sh`, `import-release.sh`, `smoke-test.sh`, `smoke-test-webhook.sh`, `get-webhook-url.sh`, `lib/common.sh`.
-
-Examples:
+Packaging, promotion, and rollback: [docs/production-deployment-standard.md](docs/production-deployment-standard.md). Homelab n8n is the sibling repo `localserver-config`. Prod host is **beeblebox**.
 
 ```bash
-# dev/test can default to localhost
 ./scripts/deploy-environment.sh dev
 ./scripts/deploy-environment.sh test local
+./scripts/deploy-environment.sh prod beeblebox
 
-# explicit release deploy
-./scripts/deploy-environment.sh test local 20260315-1631-nogit
+./scripts/smoke-test.sh test local
+EVAL_WEBHOOK_TOKEN=<token> ./scripts/smoke-test-webhook.sh test local
 
-# prod requires HTTPS credentials
-HTTPS_CERT_FILE=/path/client-cert.pem HTTPS_KEY_FILE=/path/client-key.pem \
-  ./scripts/deploy-environment.sh prod <prod-hostname>
-
-# prod import safety: pin SMTP credential explicitly
-N8N_SMTP_CREDENTIAL_ID=<smtp-credential-id> \
-HTTPS_CERT_FILE=/path/client-cert.pem HTTPS_KEY_FILE=/path/client-key.pem \
-  ./scripts/deploy-environment.sh prod <prod-hostname> 20260315-1631-nogit
-
-# webhook smoke with discovery (dev/test)
-N8N_API_KEY=<api-key> \
-SMOKE_PAYLOAD='{"play_name":"Hamlet","output_type":"Key Characters","email":"smoke@example.com"}' \
-  ./scripts/smoke-test-webhook.sh test local
-
-# optional: override workflow name used for discovery
-N8N_API_KEY=<api-key> WORKFLOW_NAME="Shakespeare Play Explorer" \
-  ./scripts/smoke-test-webhook.sh test
-
-# rollback to known good release
-./scripts/rollback-release.sh test local 20260315-1559-nogit
+EVAL_WEBHOOK_URL=https://beeblebox.taile98462.ts.net/webhook/shakespeare-play-explorer-test \
+EVAL_WEBHOOK_TOKEN=<token> \
+  node evals/run.mjs
 ```
 
-Automation note:
-- `deploy-environment.sh` now runs full flow automatically: infra deploy -> workflow import/update -> activation -> service smoke -> webhook smoke.
-- Manual JSON upload in target n8n UI is no longer required.
-- By default, webhook smoke failures are warnings; set `REQUIRE_WEBHOOK_SMOKE_PASS=1` to fail deployment on webhook smoke failure.
+`./scripts/deploy-environment.sh` deploys infra via `localserver-config`, rsyncs the release, smokes `/healthz`, then imports/activates via the n8n REST API.
 
-## Test harness
+Prod import needs a **beeblebox** `N8N_API_KEY` (Settings → n8n API). The local key returns 401. Without it, import with `n8n import:workflow` on the host, then `publish:workflow` and restart n8n. Pull `$OLLAMA_MODEL` on that host (`ollama pull llama3.2`).
 
-Run a local consistency harness for workflow structure and dataflow:
+Webhook smoke is warn-only in `dev` and required in `test`/`prod` unless `REQUIRE_WEBHOOK_SMOKE_PASS` is set.
+
+## Tests
 
 ```bash
 node tests/workflow-harness.mjs
+./scripts/preflight.sh test
+bash scripts/secret-scan.sh
 ```
 
-What it validates:
-- Required nodes and connections (Form -> Ollama + Merge -> Build Result -> Send Email)
-- Canonical form fields (`play_name`, `output_type`, `email`)
-- Send Email references `json_content`
-- `Build Result` code behavior with mock form + Ollama inputs
+CI (`.github/workflows/ci.yml`) runs the harness, JSON parse of `workflows/*.json`, and the secret scan.

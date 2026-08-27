@@ -1,56 +1,21 @@
 {
-  "name": "Shakespeare Play Explorer",
+  "name": "Shakespeare Play Explorer Eval",
   "nodes": [
     {
       "parameters": {
-        "formTitle": "Shakespeare Play Explorer",
-        "formDescription": "Enter a Shakespeare play name and choose key characters or human-centric themes. Results are emailed only if your address is on the operator allowlist.",
-        "formFields": {
-          "values": [
-            {
-              "fieldType": "text",
-              "fieldLabel": "Shakespeare Play",
-              "fieldName": "play_name",
-              "placeholder": "e.g. Hamlet, Macbeth, Romeo and Juliet",
-              "requiredField": true
-            },
-            {
-              "fieldType": "dropdown",
-              "fieldLabel": "What would you like?",
-              "fieldName": "output_type",
-              "fieldOptions": {
-                "values": [
-                  {
-                    "option": "Key Characters"
-                  },
-                  {
-                    "option": "Human-centric Themes"
-                  }
-                ]
-              },
-              "requiredField": true
-            },
-            {
-              "fieldType": "email",
-              "fieldLabel": "Your email address",
-              "fieldName": "email",
-              "requiredField": true
-            }
-          ]
-        },
-        "responseMode": "onReceived",
-        "options": {
-          "path": "shakespeare-play-explorer"
-        }
+        "httpMethod": "POST",
+        "path": "shakespeare-play-explorer-test",
+        "responseMode": "responseNode",
+        "options": {}
       },
-      "id": "form-trigger-1",
-      "name": "Form",
-      "type": "n8n-nodes-base.formTrigger",
-      "typeVersion": 2.5,
-      "webhookId": "shakespeare-play-explorer",
+      "id": "webhook-test-1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "shakespeare-play-explorer-test",
       "position": [
         240,
-        200
+        320
       ]
     },
     {
@@ -166,90 +131,22 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "loose",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "if-send-email-1",
-              "leftValue": "={{ $json.send_email }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "looseTypeValidation": true
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.webhook_response) }}",
+        "options": {}
       },
-      "id": "if-send-email-1",
-      "name": "Send Email?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
+      "id": "respond-webhook-1",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
       "position": [
         1800,
         320
       ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const input = ($input.all()[0] || {}).json || {};\n\nconst escapeHtml = (v) => String(v ?? \"\")\n  .replace(/&/g, \"&amp;\")\n  .replace(/</g, \"&lt;\")\n  .replace(/>/g, \"&gt;\")\n  .replace(/\"/g, \"&quot;\")\n  .replace(/'/g, \"&#39;\");\n\nlet parsed;\ntry {\n  parsed = JSON.parse(input.json_content || \"{}\");\n} catch (e) {\n  parsed = {\n    title: `${input.output_type || \"Result\"} for ${input.play_name || \"\"}`,\n    summary: \"Unable to parse model output as JSON.\",\n    items: [],\n  };\n}\n\nconst title = parsed.title || `${input.output_type || \"Result\"} for ${input.play_name || \"\"}`;\nconst summary = parsed.summary || \"\";\nconst itemsList = Array.isArray(parsed.items) ? parsed.items : [];\nconst requestId = input.request_id || \"\";\n\nconst tableRows = itemsList.length\n  ? itemsList\n      .map(\n        (item) =>\n          `<tr><td style=\"padding:8px;border:1px solid #ddd;vertical-align:top;\">${escapeHtml(item.name)}</td><td style=\"padding:8px;border:1px solid #ddd;vertical-align:top;\">${escapeHtml(item.description)}</td></tr>`,\n      )\n      .join(\"\")\n  : '<tr><td colspan=\"2\" style=\"padding:8px;border:1px solid #ddd;\">No rows returned</td></tr>';\n\nconst html_email_body = `\n  <div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;\">\n    <h2 style=\"margin-bottom:8px;\">${escapeHtml(title)}</h2>\n    <p style=\"margin:0 0 12px;\"><strong>Play:</strong> ${escapeHtml(input.play_name)}<br/><strong>Request:</strong> ${escapeHtml(input.output_type)}<br/><strong>Request ID:</strong> ${escapeHtml(requestId)}</p>\n    ${summary ? `<p style=\"margin:0 0 14px;\"><strong>Summary:</strong> ${escapeHtml(summary)}</p>` : \"\"}\n    <table style=\"border-collapse:collapse;width:100%;max-width:760px;\">\n      <thead>\n        <tr>\n          <th style=\"text-align:left;padding:8px;border:1px solid #ddd;background:#f3f4f6;\">Name</th>\n          <th style=\"text-align:left;padding:8px;border:1px solid #ddd;background:#f3f4f6;\">Description</th>\n        </tr>\n      </thead>\n      <tbody>${tableRows}</tbody>\n    </table>\n    <hr style=\"margin:16px 0;border:none;border-top:1px solid #e5e7eb;\"/>\n    <p><strong>Raw JSON</strong></p>\n    <pre style=\"white-space:pre-wrap;background:#f8fafc;border:1px solid #e5e7eb;padding:10px;border-radius:6px;\">${escapeHtml(input.json_content || \"\")}</pre>\n  </div>\n`.trim();\n\nreturn {\n  json: {\n    ...input,\n    html_email_body,\n  },\n};"
-      },
-      "id": "code-2",
-      "name": "Build HTML Email",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2020,
-        160
-      ]
-    },
-    {
-      "parameters": {
-        "fromEmail": "={{ $json.from_email }}",
-        "toEmail": "={{ $json.email }}",
-        "subject": "=Shakespeare {{ $json.output_type }} \u2013 {{ $json.play_name }} [{{ $json.request_id }}]",
-        "emailFormat": "both",
-        "text": "=Request ID: {{ $json.request_id }}\n\nHere are the {{ $json.output_type }} for {{ $json.play_name }}:\n\n```json\n{{ $json.json_content }}\n```\n",
-        "html": "={{ $json.html_email_body }}",
-        "options": {
-          "appendAttribution": false,
-          "allowUnauthorizedCerts": false
-        }
-      },
-      "id": "send-email-1",
-      "name": "Send Email",
-      "type": "n8n-nodes-base.emailSend",
-      "typeVersion": 2.1,
-      "position": [
-        2240,
-        160
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {},
-      "id": "noop-1",
-      "name": "NoOp",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
-      "position": [
-        2240,
-        420
-      ]
     }
   ],
   "connections": {
-    "Form": {
+    "Webhook": {
       "main": [
         [
           {
@@ -331,36 +228,7 @@
       "main": [
         [
           {
-            "node": "Send Email?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Email?": {
-      "main": [
-        [
-          {
-            "node": "Build HTML Email",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "NoOp",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build HTML Email": {
-      "main": [
-        [
-          {
-            "node": "Send Email",
+            "node": "Respond to Webhook",
             "type": "main",
             "index": 0
           }

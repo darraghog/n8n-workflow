@@ -15,6 +15,9 @@ jobs:
       - name: Workflow harness
         run: node tests/workflow-harness.mjs
       - name: Workflow JSON syntax
-        run: python3 -m json.tool workflows/*.json >/dev/null
+        run: |
+          for f in workflows/*.json; do
+            python3 -m json.tool "$f" >/dev/null
+          done
       - name: Secret scan
         run: bash scripts/secret-scan.sh

@@ -20,6 +20,8 @@ common::load_project_env "$ROOT"
 N8N_API_KEY="${N8N_API_KEY:-}"
 N8N_SMTP_CREDENTIAL_ID="${N8N_SMTP_CREDENTIAL_ID:-}"
 N8N_SMTP_CREDENTIAL_NAME="${N8N_SMTP_CREDENTIAL_NAME:-}"
+N8N_CORE_WORKFLOW_NAME="${N8N_CORE_WORKFLOW_NAME:-Shakespeare Play Explorer Core}"
+CORE_WORKFLOW_ID_PLACEHOLDER="__CORE_WORKFLOW_ID__"
 N8N_SMTP_CREDENTIAL_NAME="${N8N_SMTP_CREDENTIAL_NAME%\"}"
 N8N_SMTP_CREDENTIAL_NAME="${N8N_SMTP_CREDENTIAL_NAME#\"}"
 N8N_SMTP_CREDENTIAL_NAME="${N8N_SMTP_CREDENTIAL_NAME%\'}"
@@ -121,14 +123,19 @@ for wf in "${workflow_files[@]}"; do
   [[ "$(basename "$wf")" == *error* ]] && sorted_files+=("$wf")
 done
 for wf in "${workflow_files[@]}"; do
+  [[ "$(basename "$wf")" == *core* ]] && sorted_files+=("$wf")
+done
+for wf in "${workflow_files[@]}"; do
   base="$(basename "$wf")"
-  [[ "$base" == *error* || "$base" == *eval* ]] && continue
+  [[ "$base" == *error* || "$base" == *core* || "$base" == *eval* ]] && continue
   sorted_files+=("$wf")
 done
 for wf in "${workflow_files[@]}"; do
   [[ "$(basename "$wf")" == *eval* ]] && sorted_files+=("$wf")
 done
 workflow_files=("${sorted_files[@]}")
+
+CORE_WORKFLOW_ID=""
 
 for wf in "${workflow_files[@]}"; do
   payload_file="$tmp_dir/payload-$(basename "$wf")"
@@ -142,9 +149,9 @@ PY
 )"
   [[ -n "$workflow_name" ]] || { echo "[import] ERROR: workflow missing name: $wf"; exit 1; }
 
-  python3 - "$wf" "$payload_file" "$N8N_SMTP_CREDENTIAL_ID" "$N8N_SMTP_CREDENTIAL_NAME" <<'PY'
+  python3 - "$wf" "$payload_file" "$N8N_SMTP_CREDENTIAL_ID" "$N8N_SMTP_CREDENTIAL_NAME" "$CORE_WORKFLOW_ID" "$CORE_WORKFLOW_ID_PLACEHOLDER" <<'PY'
 import json, sys
-src, dst, smtp_cred_id, smtp_cred_name = sys.argv[1:5]
+src, dst, smtp_cred_id, smtp_cred_name, core_workflow_id, core_placeholder = sys.argv[1:7]
 with open(src, "r", encoding="utf-8") as f:
     wf = json.load(f)
 
@@ -163,6 +170,16 @@ if smtp_cred_id:
                 "id": smtp_cred_id,
                 "name": smtp_cred_name or "SMTP account"
             }
+
+for node in payload["nodes"]:
+    if node.get("type") != "n8n-nodes-base.executeWorkflow":
+        continue
+    params = node.setdefault("parameters", {})
+    workflow_id = params.get("workflowId")
+    if isinstance(workflow_id, dict) and workflow_id.get("value") == core_placeholder:
+        if not core_workflow_id:
+            raise SystemExit(f"missing core workflow id while binding {src}")
+        workflow_id["value"] = core_workflow_id
 
 with open(dst, "w", encoding="utf-8") as f:
     json.dump(payload, f)
@@ -287,6 +304,11 @@ PY
     echo "[import] ERROR: workflow did not become active: $workflow_name (id=$wf_id)"
     exit 1
   fi
+
+  if [[ "$workflow_name" == "$N8N_CORE_WORKFLOW_NAME" ]]; then
+    CORE_WORKFLOW_ID="$wf_id"
+    echo "[import] Core workflow id: $CORE_WORKFLOW_ID"
+  fi
 done
 
 echo "[import] Binding error workflow..."
@@ -310,7 +332,7 @@ err = find("Shakespeare Play Explorer – Operator Errors")
 if not err:
     raise SystemExit("missing error workflow after import")
 print(err)
-for name in ("Shakespeare Play Explorer", "Shakespeare Play Explorer Eval"):
+for name in ("Shakespeare Play Explorer", "Shakespeare Play Explorer Eval", "Shakespeare Play Explorer Core"):
     wf_id = find(name)
     if wf_id:
         print(wf_id)

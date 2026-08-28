@@ -1,16 +1,26 @@
 # Shakespeare Play Explorer (n8n)
 
+Reference project to evaluate key AI workflow concepts:
+* N8N workflows created/updated, deployed and tested by AI coding tools
+* Workflows with Javascript/Python coding steps, AI model calls and actions (email notifications)
+* Resilient workflows (retries, etc.)
+* Workflows designed to mitigate  prompt injection risks
+* Workflows with separation of core processing from eval testing (no actions) and form-triggers (email actions)
+* Smoke tests to ensure successful deployments
+* GitHub actions to validate tests still work after checkin
+
 Form in, Ollama JSON out, email only if the recipient is allowlisted.
 
-n8n will not activate a Form Trigger and Respond to Webhook in the same workflow, so this is three workflows:
+n8n will not activate a Form Trigger and Respond to Webhook in the same workflow, so this is four workflows:
 
-| Workflow | Trigger | Email |
-|----------|---------|-------|
-| **Shakespeare Play Explorer** | Form `/form/shakespeare-play-explorer` | Yes, if allowlisted and `SMTP_FROM_EMAIL` is set |
-| **Shakespeare Play Explorer Eval** | `POST /webhook/shakespeare-play-explorer-test` | Never |
+| Workflow | Trigger | Role |
+|----------|---------|------|
+| **Shakespeare Play Explorer Core** | When Executed by Another Workflow | Ollama, validation, schema — single source of truth |
+| **Shakespeare Play Explorer** | Form `/form/shakespeare-play-explorer` | Maps form fields → Run Core → email if allowlisted |
+| **Shakespeare Play Explorer Eval** | `POST /webhook/shakespeare-play-explorer-test` | Auth + Run Core → JSON response (never emails) |
 | **Shakespeare Play Explorer – Operator Errors** | Error Trigger | `OPERATOR_EMAIL` only |
 
-Edit via `scripts/generate-main-workflow.py` (writes the form + eval JSON). Field contract: [docs/workflow-fields.md](docs/workflow-fields.md).
+Edit via `scripts/generate-main-workflow.py` (writes core + form + eval JSON). Field contract: [docs/workflow-fields.md](docs/workflow-fields.md).
 
 ## Live URLs
 
@@ -60,7 +70,7 @@ These must be inside the n8n process (`$env`). `localserver-config` `compose/n8n
 | `OLLAMA_BASE_URL` | Default `http://host.docker.internal:11434` |
 | `OLLAMA_MODEL` | Default `llama3.2` (use a tag that is **pulled on that host**) |
 
-Create an SMTP credential in n8n (not in git). Import binds it with `N8N_SMTP_CREDENTIAL_ID` or `N8N_SMTP_CREDENTIAL_NAME`. Remote targets resolve **by name** — local credential ids do not exist on beeblebox.
+Create an SMTP credential in n8n (not in git). Import binds it with `N8N_SMTP_CREDENTIAL_ID` or `N8N_SMTP_CREDENTIAL_NAME`. Form/eval adapters call the core sub-workflow; import binds `N8N_CORE_WORKFLOW_NAME` (default `Shakespeare Play Explorer Core`) on each `Run Core` node. Remote targets resolve **by name** — local credential ids do not exist on beeblebox.
 
 See [docs/credentials.md](docs/credentials.md) and [.env.example](.env.example).
 

@@ -2,42 +2,52 @@
 
 All workflow fields use `snake_case`.
 
-Workflow stages:
+## Workflow layout
 
 ```
-Form | Webhook
-        ↓
-Prepare Request
-        ↓
-Skip Ollama? ──true──→ Build Result
-        │ false
-        ↓
-Ollama + Merge → Build Result → Log Execution
-        ↓
-Send Email? ──true──→ Build HTML Email → Send Email
-        │ false
-        ↓
-Webhook Response? ──true──→ Respond to Webhook
-                  └──false──→ NoOp
+Form adapter                    Eval adapter
+  Form / Map Form Request         Webhook / Map Eval Request
+           \                            /
+            \                          /
+             →  Run Core (Execute Sub-workflow)  →
+                        |
+              Core sub-workflow
+    When Executed by Another Workflow
+        → Prepare Request → Ollama path → Build Result → Log Execution
+                        |
+         back to adapter (email or Respond to Webhook)
 ```
 
-A sibling workflow, `Shakespeare Play Explorer – Operator Errors`, uses Error Trigger → Format Error → Notify Operator (`OPERATOR_EMAIL` only).
+Operator errors: `Shakespeare Play Explorer – Operator Errors` (Error Trigger → Notify Operator).
+
+## Core input (sub-workflow)
+
+Adapters pass this to **Run Core**:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `channel` | string | `form` or `eval` — controls allowlist and email |
+| `request_id` | string | Optional UUID; core generates one if omitted |
+| `play_name` | string | Play name from form or webhook body |
+| `output_type` | string | `Key Characters` or `Human-centric Themes` |
+| `email` | string | Recipient (form path); ignored for eval response |
 
 ## Canonical Prepare Request output
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `request_id` | string | UUID correlation id |
+| `channel` | string | `form` or `eval` |
 | `play_name` | string | Sanitized play name (letters, numbers, spaces, `.,'-`; max 80) |
 | `play_valid` | bool | Whether the raw play name passed validation |
 | `output_type` | string | "Key Characters" or "Human-centric Themes" |
 | `email` | string | Submitted recipient (never returned on the test webhook) |
 | `email_allowed` | bool | Recipient is on `EMAIL_ALLOWLIST` |
 | `from_email` | string | `$env.SMTP_FROM_EMAIL` |
-| `from_webhook` | bool | Request came from the no-email test webhook |
+| `from_webhook` | bool | `channel === "eval"` |
 | `skip_ollama` | bool | Validation or allowlist failure; do not call the model |
-| `skip_email` | bool | True for webhook/eval path |
-| `send_email` | bool | Form path and allowlisted and `SMTP_FROM_EMAIL` set |
+| `skip_email` | bool | True when `channel === "eval"` |
+| `send_email` | bool | `channel === "form"` and allowlisted and `SMTP_FROM_EMAIL` set |
 | `ollama_url` | string | `$env.OLLAMA_BASE_URL` + `/api/chat` |
 | `ollama_body` | string | JSON-encoded chat payload (system + JSON user message) |
 | `status` | string | `ok`, `validation_error`, or `email_rejected` at prepare time |

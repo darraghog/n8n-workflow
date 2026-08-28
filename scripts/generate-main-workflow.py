@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Assemble workflows/shakespeare-play-explorer.json. Run from repo root."""
+"""Generate core + adapter workflows. Run from repo root."""
 from pathlib import Path
 import json
 
 ROOT = Path(__file__).resolve().parents[1]
+
+CORE_WORKFLOW_NAME = "Shakespeare Play Explorer Core"
+CORE_WORKFLOW_ID_PLACEHOLDER = "__CORE_WORKFLOW_ID__"
 
 prepare = r"""
 const PLAY_RE = /^[A-Za-z0-9][A-Za-z0-9 .,'\-]{0,79}$/;
@@ -35,21 +38,6 @@ function uuid() {
   });
 }
 
-function headerLookup(headers, name) {
-  if (!headers || typeof headers !== "object") return "";
-  const found = Object.keys(headers).find((k) => k.toLowerCase() === name.toLowerCase());
-  return found ? String(headers[found]) : "";
-}
-
-function nodeExecuted(name) {
-  try {
-    $(name);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
 function emailAllowed(email, allowlistRaw) {
   const emailNorm = String(email || "").trim().toLowerCase();
   if (!emailNorm || emailNorm.indexOf("@") < 1) return false;
@@ -64,22 +52,12 @@ function emailAllowed(email, allowlistRaw) {
   return false;
 }
 
-const incomingRaw = ($input.first() || {}).json || {};
-const incoming =
-  incomingRaw.body && typeof incomingRaw.body === "object"
-    ? Object.assign({}, incomingRaw.body, {
-        headers: incomingRaw.headers || incomingRaw.body.headers,
-        query: incomingRaw.query || incomingRaw.body.query,
-      })
-    : incomingRaw;
-const fromWebhook =
-  nodeExecuted("Webhook") ||
-  !!headerLookup(incoming.headers, "x-eval-token") ||
-  !!(incomingRaw.body && typeof incomingRaw.body === "object");
+const incoming = ($input.first() || {}).json || {};
+const channel = incoming.channel === "eval" ? "eval" : "form";
 const request_id = incoming.request_id || uuid();
-const rawPlay = String(incoming.play_name || incoming["Shakespeare Play"] || "").trim();
-const output_type = incoming.output_type || incoming["What would you like?"] || "Key Characters";
-const email = String(incoming.email || incoming["Your email address"] || "").trim();
+const rawPlay = String(incoming.play_name || "").trim();
+const output_type = incoming.output_type || "Key Characters";
+const email = String(incoming.email || "").trim();
 const play_valid = PLAY_RE.test(rawPlay);
 const play_name = play_valid ? rawPlay : rawPlay.replace(/[^A-Za-z0-9 .,'\-]/g, "").slice(0, 80);
 const allowlist = env("EMAIL_ALLOWLIST", "");
@@ -88,23 +66,13 @@ const from_email = env("SMTP_FROM_EMAIL", "");
 const ollama_base = env("OLLAMA_BASE_URL", "http://host.docker.internal:11434").replace(/\/$/, "");
 const ollama_model = env("OLLAMA_MODEL", "llama3.2");
 
-if (fromWebhook) {
-  const expected = env("EVAL_WEBHOOK_TOKEN", "");
-  const provided =
-    headerLookup(incoming.headers, "x-eval-token") ||
-    String(incoming.eval_token || incoming.token || "").trim();
-  if (!expected || provided !== expected) {
-    throw new Error("Unauthorized webhook");
-  }
-}
-
 let status = "ok";
 if (!play_valid) status = "validation_error";
-else if (!fromWebhook && !email_allowed) status = "email_rejected";
+else if (channel === "form" && !email_allowed) status = "email_rejected";
 
 const skip_ollama = status !== "ok";
-const skip_email = fromWebhook;
-const send_email = !fromWebhook && email_allowed && !!from_email;
+const skip_email = channel === "eval";
+const send_email = channel === "form" && email_allowed && !!from_email;
 
 const userPayload = {
   play: play_valid ? play_name : "",
@@ -124,13 +92,14 @@ const ollama_payload = {
 return {
   json: {
     prepared: true,
+    channel,
     request_id,
     play_name: play_valid ? play_name : rawPlay,
     play_valid,
     output_type,
     email,
     email_allowed,
-    from_webhook: fromWebhook,
+    from_webhook: channel === "eval",
     skip_ollama,
     skip_email,
     send_email,
@@ -140,6 +109,62 @@ return {
     ollama_payload,
     ollama_body: JSON.stringify(ollama_payload),
     status,
+  },
+};
+""".strip()
+
+map_form = r"""
+const incoming = ($input.first() || {}).json || {};
+return {
+  json: {
+    channel: "form",
+    play_name: String(incoming.play_name || incoming["Shakespeare Play"] || "").trim(),
+    output_type: incoming.output_type || incoming["What would you like?"] || "Key Characters",
+    email: String(incoming.email || incoming["Your email address"] || "").trim(),
+  },
+};
+""".strip()
+
+map_eval = r"""
+function env(name, fallback) {
+  try {
+    if (typeof $env !== "undefined" && $env && $env[name] != null && String($env[name]).length) {
+      return String($env[name]);
+    }
+  } catch (e) {}
+  return fallback;
+}
+
+function headerLookup(headers, name) {
+  if (!headers || typeof headers !== "object") return "";
+  const found = Object.keys(headers).find((k) => k.toLowerCase() === name.toLowerCase());
+  return found ? String(headers[found]) : "";
+}
+
+const incomingRaw = ($input.first() || {}).json || {};
+const incoming =
+  incomingRaw.body && typeof incomingRaw.body === "object"
+    ? Object.assign({}, incomingRaw.body, {
+        headers: incomingRaw.headers || incomingRaw.body.headers,
+        query: incomingRaw.query || incomingRaw.body.query,
+      })
+    : incomingRaw;
+
+const expected = env("EVAL_WEBHOOK_TOKEN", "");
+const provided =
+  headerLookup(incoming.headers, "x-eval-token") ||
+  String(incoming.eval_token || incoming.token || "").trim();
+if (!expected || provided !== expected) {
+  throw new Error("Unauthorized webhook");
+}
+
+return {
+  json: {
+    channel: "eval",
+    play_name: String(incoming.play_name || "").trim(),
+    output_type: incoming.output_type || "Key Characters",
+    email: String(incoming.email || "eval@example.com").trim(),
+    request_id: incoming.request_id,
   },
 };
 """.strip()
@@ -297,6 +322,7 @@ const log = {
   execution_id,
   play_name: input.play_name || null,
   output_type: input.output_type || null,
+  channel: input.channel || null,
   parse_ok: !!input.parse_ok,
   schema_ok: !!input.schema_ok,
   groundedness_ok: !!input.groundedness_ok,
@@ -402,6 +428,44 @@ def if_boolean(node_id, name, field, x, y):
     }
 
 
+def code_node(node_id, name, js_code, x, y):
+    return {
+        "parameters": {"jsCode": js_code},
+        "id": node_id,
+        "name": name,
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [x, y],
+    }
+
+
+def run_core_node(x, y, workflow_id=CORE_WORKFLOW_ID_PLACEHOLDER):
+    return {
+        "parameters": {
+            "workflowId": {
+                "__rl": True,
+                "value": workflow_id,
+                "mode": "list",
+                "cachedResultName": CORE_WORKFLOW_NAME,
+            },
+            "workflowInputs": {
+                "mappingMode": "defineBelow",
+                "value": {},
+                "matchingColumns": [],
+                "schema": [],
+                "attemptToConvertTypes": False,
+                "convertFieldsToString": True,
+            },
+            "options": {"waitForSubWorkflow": True},
+        },
+        "id": "run-core-1",
+        "name": "Run Core",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [x, y],
+    }
+
+
 settings_common = {
     "executionOrder": "v1",
     "executionTimeout": 120,
@@ -441,32 +505,9 @@ merge_node = {
     "position": [1140, 320],
 }
 
-prepare_node = {
-    "parameters": {"jsCode": prepare},
-    "id": "prepare-request-1",
-    "name": "Prepare Request",
-    "type": "n8n-nodes-base.code",
-    "typeVersion": 2,
-    "position": [480, 320],
-}
-
-build_node = {
-    "parameters": {"jsCode": build_result},
-    "id": "code-1",
-    "name": "Build Result",
-    "type": "n8n-nodes-base.code",
-    "typeVersion": 2,
-    "position": [1360, 320],
-}
-
-log_node = {
-    "parameters": {"jsCode": log_exec},
-    "id": "log-exec-1",
-    "name": "Log Execution",
-    "type": "n8n-nodes-base.code",
-    "typeVersion": 2,
-    "position": [1580, 320],
-}
+prepare_node = code_node("prepare-request-1", "Prepare Request", prepare, 480, 320)
+build_node = code_node("code-1", "Build Result", build_result, 1360, 320)
+log_node = code_node("log-exec-1", "Log Execution", log_exec, 1580, 320)
 
 ollama_connections = {
     "Prepare Request": {"main": [[{"node": "Skip Ollama?", "type": "main", "index": 0}]]},
@@ -482,6 +523,37 @@ ollama_connections = {
     "Ollama": {"main": [[{"node": "Merge", "type": "main", "index": 1}]]},
     "Merge": {"main": [[{"node": "Build Result", "type": "main", "index": 0}]]},
     "Build Result": {"main": [[{"node": "Log Execution", "type": "main", "index": 0}]]},
+}
+
+core_wf = {
+    "name": CORE_WORKFLOW_NAME,
+    "nodes": [
+        {
+            "parameters": {"inputSource": "passthrough"},
+            "id": "subwf-trigger-1",
+            "name": "When Executed by Another Workflow",
+            "type": "n8n-nodes-base.executeWorkflowTrigger",
+            "typeVersion": 1.1,
+            "position": [240, 320],
+        },
+        prepare_node,
+        if_boolean("if-skip-ollama-1", "Skip Ollama?", "skip_ollama", 700, 320),
+        ollama_node,
+        merge_node,
+        build_node,
+        log_node,
+    ],
+    "connections": {
+        "When Executed by Another Workflow": {
+            "main": [[{"node": "Prepare Request", "type": "main", "index": 0}]]
+        },
+        **ollama_connections,
+    },
+    "pinData": {},
+    "settings": settings_common,
+    "staticData": None,
+    "meta": meta_common,
+    "tags": [],
 }
 
 form_wf = {
@@ -530,21 +602,10 @@ form_wf = {
             "webhookId": "shakespeare-play-explorer",
             "position": [240, 200],
         },
-        prepare_node,
-        if_boolean("if-skip-ollama-1", "Skip Ollama?", "skip_ollama", 700, 320),
-        ollama_node,
-        merge_node,
-        build_node,
-        log_node,
-        if_boolean("if-send-email-1", "Send Email?", "send_email", 1800, 320),
-        {
-            "parameters": {"jsCode": build_html},
-            "id": "code-2",
-            "name": "Build HTML Email",
-            "type": "n8n-nodes-base.code",
-            "typeVersion": 2,
-            "position": [2020, 160],
-        },
+        code_node("map-form-1", "Map Form Request", map_form, 480, 320),
+        run_core_node(700, 320),
+        if_boolean("if-send-email-1", "Send Email?", "send_email", 920, 320),
+        code_node("code-2", "Build HTML Email", build_html, 1140, 160),
         {
             "parameters": {
                 "fromEmail": "={{ $json.from_email }}",
@@ -562,7 +623,7 @@ form_wf = {
             "name": "Send Email",
             "type": "n8n-nodes-base.emailSend",
             "typeVersion": 2.1,
-            "position": [2240, 160],
+            "position": [1360, 160],
             "retryOnFail": True,
             "maxTries": 3,
             "waitBetweenTries": 2000,
@@ -573,13 +634,13 @@ form_wf = {
             "name": "NoOp",
             "type": "n8n-nodes-base.noOp",
             "typeVersion": 1,
-            "position": [2240, 420],
+            "position": [1360, 420],
         },
     ],
     "connections": {
-        "Form": {"main": [[{"node": "Prepare Request", "type": "main", "index": 0}]]},
-        **ollama_connections,
-        "Log Execution": {"main": [[{"node": "Send Email?", "type": "main", "index": 0}]]},
+        "Form": {"main": [[{"node": "Map Form Request", "type": "main", "index": 0}]]},
+        "Map Form Request": {"main": [[{"node": "Run Core", "type": "main", "index": 0}]]},
+        "Run Core": {"main": [[{"node": "Send Email?", "type": "main", "index": 0}]]},
         "Send Email?": {
             "main": [
                 [{"node": "Build HTML Email", "type": "main", "index": 0}],
@@ -612,12 +673,8 @@ eval_wf = {
             "webhookId": "shakespeare-play-explorer-test",
             "position": [240, 320],
         },
-        prepare_node,
-        if_boolean("if-skip-ollama-1", "Skip Ollama?", "skip_ollama", 700, 320),
-        ollama_node,
-        merge_node,
-        build_node,
-        log_node,
+        code_node("map-eval-1", "Map Eval Request", map_eval, 480, 320),
+        run_core_node(700, 320),
         {
             "parameters": {
                 "respondWith": "json",
@@ -628,13 +685,13 @@ eval_wf = {
             "name": "Respond to Webhook",
             "type": "n8n-nodes-base.respondToWebhook",
             "typeVersion": 1.1,
-            "position": [1800, 320],
+            "position": [920, 320],
         },
     ],
     "connections": {
-        "Webhook": {"main": [[{"node": "Prepare Request", "type": "main", "index": 0}]]},
-        **ollama_connections,
-        "Log Execution": {"main": [[{"node": "Respond to Webhook", "type": "main", "index": 0}]]},
+        "Webhook": {"main": [[{"node": "Map Eval Request", "type": "main", "index": 0}]]},
+        "Map Eval Request": {"main": [[{"node": "Run Core", "type": "main", "index": 0}]]},
+        "Run Core": {"main": [[{"node": "Respond to Webhook", "type": "main", "index": 0}]]},
     },
     "pinData": {},
     "settings": settings_common,
@@ -645,12 +702,16 @@ eval_wf = {
 
 
 def main():
-    main_path = ROOT / "workflows" / "shakespeare-play-explorer.json"
-    eval_path = ROOT / "workflows" / "shakespeare-play-explorer-eval.json"
-    main_path.write_text(json.dumps(form_wf, indent=2) + "\n", encoding="utf-8")
-    eval_path.write_text(json.dumps(eval_wf, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote {main_path}")
-    print(f"wrote {eval_path}")
+    workflows_dir = ROOT / "workflows"
+    paths = {
+        "core": workflows_dir / "shakespeare-play-explorer-core.json",
+        "form": workflows_dir / "shakespeare-play-explorer.json",
+        "eval": workflows_dir / "shakespeare-play-explorer-eval.json",
+    }
+    for label, wf in (("core", core_wf), ("form", form_wf), ("eval", eval_wf)):
+        path = paths[label]
+        path.write_text(json.dumps(wf, indent=2) + "\n", encoding="utf-8")
+        print(f"wrote {path}")
 
 
 if __name__ == "__main__":

@@ -17,8 +17,10 @@ echo "[preflight] Environment: $ENVIRONMENT"
 [[ -f "$ROOT/docs/credentials.md" ]] || { echo "[preflight] ERROR: missing docs/credentials.md"; exit 1; }
 [[ -f "$ROOT/docs/production-deployment-standard.md" ]] || { echo "[preflight] ERROR: missing docs/production-deployment-standard.md"; exit 1; }
 [[ -f "$ROOT/workflows/shakespeare-play-explorer-error.json" ]] || { echo "[preflight] ERROR: missing operator error workflow"; exit 1; }
+[[ -f "$ROOT/workflows/shakespeare-play-explorer-core.json" ]] || { echo "[preflight] ERROR: missing core workflow"; exit 1; }
 
 echo "[preflight] Running workflow harness..."
+python3 "$ROOT/scripts/generate-main-workflow.py" >/dev/null
 node "$ROOT/tests/workflow-harness.mjs"
 
 echo "[preflight] Validating workflow JSON syntax..."

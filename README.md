@@ -1,4 +1,4 @@
-# Shakespeare Play Explorer (n8n)
+# Managed AI-Enabled Workflows Prototype
 
 Reference project to evaluate key AI workflow concepts:
 * N8N workflows created/updated, deployed and tested by AI coding tools
@@ -8,6 +8,8 @@ Reference project to evaluate key AI workflow concepts:
 * Workflows with separation of core processing from eval testing (no actions) and form-triggers (email actions)
 * Smoke tests to ensure successful deployments
 * GitHub actions to validate tests still work after checkin
+
+Toy use case: ask user to provide a work of shakespeare and email the usr a list of themes or key characters based on their selection. Substitute for any form-based AI processing in an orchestratable workflow.
 
 Form in, Ollama JSON out, email only if the recipient is allowlisted.
 
